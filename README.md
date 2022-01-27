@@ -1,5 +1,5 @@
 # wordle-assistant
-wordleAssistant is a Python program to help you select probe words for Wordle
+wordleAssistant is a Python program to help you select probe words for Wordle.
 
 Think of Wordle as a chess game.  At every move, you enter a probe word and the game replies with cues about how the letters of your probe word compare to the letters of the day's answer word.<p>
  green  : letter in correct position<br>
