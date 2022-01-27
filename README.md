@@ -20,6 +20,9 @@ Since the initial searches are only one ply deep, the scores returned are not ac
 <p>
 The possible answer words and probe words were collected from the wordle game.  The number of possible answer words is 2,315 and the number of possible probe words is 12,970. The English language has a lot of obscure words that you can enter as probes but Wordle is kind enough to select only more common words as possible answers.
 <p>
-wordleAssistant runs in python3.
+wordleAssistant runs in a command line in python3.<br>
+ For instructions on how to run the program, see the documentation at the beginning of /src/wordleAssistant.py
 <p>
 You can also run wordleAssistant to determine the best opening probe words. This calculation takes about a day to compute on a laptop.
+ <p>
+ 
