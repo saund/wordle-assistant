@@ -4,32 +4,37 @@
 #2022/01/25
 #I was going to avoid wasting time on wordle but my friend Don provoked me to do this.
 #
-#This program is a wordle assistant.
+#This program is a Wordle Assistant.
 #Given some set of candidate probe words and some constraints provided by responses
 #to guesses, this makes a list of remaining allowable answer words, and it scores
 #candidate probe words for how good a choice each one would be.
 #
-#There is no claim of optimal scoring.  In fact, the scoring function produces
-#two scores.  One score aims for the smallest average number of guesses, the other
-#aims to minimize the number of daily wordle answer words that will not be found
-#in time.
-#The program performs one-ply search, testing candidate probe words against the
-#list of possible remaining answer words, to average out how much information the probe
-#word provides.
-
+#There is no claim of absolute optimal scoring. In fact, the scoring function produces
+#two or three scores.  One score tells average number of words that would remain as
+#eligible answers after entering a probe word. The second tells the maxium number of
+#words that might remain, depending on what the (undisclosed) answer word of the day
+#happens to be. This score is useful to prevent running over the limit of 6 guesses.
+#To compute these scores, the program initially performs one-ply search, testing
+#candidate probe words against the list of possible remaining answer words.
+#When the list of remaining words is small enough, the third score computed is the
+#expected number of moves required to find the answer word.  This is computed by
+#fully expanding the tree of next probe moves within the remaining words.
 
 
 ################################################################################
 #
 #How to use the program:
 #
-#1. The program runs in python3.  Make sure python3 is installed on your computer.
+#1. The program runs in Python3.  Make sure Python3 is installed on your computer.
 #
-#2. Download the program and the word list files, wordle-answer-words.text and
-#   wordle-probe-words.text to a directory.
+#2. Download the program and the following data files to a directory:
+#      wordle-answer-words.text
+#      wordle-probe-words.text
+#      precomputed-probe-dict-raise-normal-mode.json
+#      precomputed-probe-dict-raise-hard-mode.json
 #
 #3. In a shell window, navigate to the directory where you installed the program
-#   and word list file.
+#   and data files.
 #   <your-dir>/> 
 #
 #4. Run python:
@@ -38,7 +43,55 @@
 #5.>>> import wordleAssistant as wa
 #      The import step loads two lists of words, one list of 2,315 words that can be
 #      answer words, and another list of 12,970 words that can be probe words.
-#      Give these word lists slightly more convenient names:
+#      It also loads two files of precomputed scores for the recommended first probe
+#      word.  The program will run without these files but it will be a lot slower.
+# 
+#6.>>> wa.runGame()
+#
+#      The user function, runGame, has two optional arguments:
+#
+#      runGame(hard_mode_p = False, initial_probe_word = None)
+#
+#      To run in Hard mode, call runGame(True).  In Hard mode, candidate probe
+#      words must meet the constraints of the Wordle response cues given so far.
+#
+#      The initial_probe_word defaults to 'raise'.
+#      This was determined to be the most informative probe word (for details, read below).
+#      If you want to use a different initial probe word, enter it as the second
+#      argument to runGame().
+#
+#      call runGame('h') to get a brief help printout.
+#
+#      run runGame() in conjunction with your Wordle game running in your browser.
+#
+#      runGame will alternately ask you to enter the probe word typed into Wordle,
+#      and Wordle game responses in the form of green, yellow, and gray tile colors
+#      marking your probe entry.
+#      Enter response colors as a single string of five characters:
+#       'r' = gReen
+#       'l' = yeLLow
+#       'y' = graY
+#
+#Example: (letting wordleAssistant assume you entered the word 'raise' as your first
+#          Wordle probe word)
+#
+#>> wa.runGame()
+#Please enter response to probe word "raise": yrlly             <---**your entry**
+#Wordle game response:   "graY  gReen  yeLLow  yeLLow  graY"
+#
+#     wordleAssistant will proceed to compute scores for candidate probe words.
+#     Usually you'll get printout within a few seconds, but sometimes when there
+#     are a lot of remaining words to sort through, the computations can take
+#     several minutes.
+#
+##############################
+
+
+##############################
+#
+#A deeper technical dive.
+#
+#7.  For convenience, give the answer and probe word lists slightly shorter names.
 #
 #>>> answer_word_list = wa.gl_answer_word_list  
 #>>> len(answer_word_list)
@@ -47,10 +100,9 @@
 #>>> len(probe_word_list)
 #12970
 #
-#6. Select a probe word for your wordle game of the day, and enter it in Wordle.
-#   I recommend using 'raise' as the initial probe word.
+#8. I recommend using 'raise' as the initial probe word.
 #   From running the function, wa.scoreProbeWords() on all words, this program suggests
-#   the following probe words, but you can choose whatever you like.
+#   the following probe words in order of score, but you can choose whatever you like.
 #
 #0   ['roate', 60.42462203023758, 195]
 #1   ['raise', 61.00086393088553, 168]
@@ -102,12 +154,16 @@
 #19   ['crane', 78.74168466522679, 263]
 #20   ['atone', 78.95939524838013, 191]
 #
-#7. Read out the wordle response, which will be something like,
-#   "yellow gray gray green yellow gray"
+#The entire list of all scores are in the files,
+# /probe-scores-2315.text
+# /probe-scores-12790.text
 #
-#8. Use this response to compose a function call to ask wordleAssistant to find the
+#9. Read out the wordle response, which will be something like,
+#   "yellow gray gray green yellow"
+#   You will convert this to a list of char, like ['l', 'y', 'y', 'r', 'l']
+#
+#10. Use this game response to compose a function call to ask wordleAssistant to find the
 #   remaining words given the wordle response to your probe.
-#   This is the form of your first call to the program:
 #
 #>>> <ok_words>, <char_constraints> = wa.pruneWordsPerProbeResponse(<word_list>,
 #                                                                   [<probe_word>, <char_response_list>])
@@ -117,22 +173,22 @@
 #   'y' for graY
 #   'r' for gReen
 #
-#   For example, if you use the word, 'story' for your first probe word, your first function
+#   For example, if you use the word, 'story' for your first probe word, your function
 #   call might look like this:
 #
-##>>> ok_words_1, ccl1 = wa.pruneWordsPerProbeResponse(answer_word_list, ['story', ['l', 'y', 'y', 'r', 'l', 'y']])
+##>>> ok_words_1, ccl1 = wa.pruneWordsPerProbeResponse(answer_word_list, ['story', ['l', 'y', 'y', 'r', 'l']])
 #
-#9. How many words are still allowable?
+#11. How many words are still allowable?
 #>>> len(ok_words_1)
 #
 #   ccl1 is a data structure the represents the character constraints obtained from
 #   the game responses. Call this function to see the allowable characters for each
 #   character position, and the list of required characters:
 #
+#   Check out what the character constraints look like after the first probe word.
 #>>> wa.printCharConstraintList(ccl1)
 #
-#
-#10. Compute scores for these words.
+#12. Compute scores for the ok words.
 #>>> scores_list_1 = wa.scoreProbeWords(ok_words_1, probe_word_list)
 #
 #   scores_list_1 will be a list of tuples of the form,
@@ -154,16 +210,16 @@
 #   you reduce this list.
 #   This function will print out a list of the 20 best scoring words, along with their scores.
 #
-#11. Usually you'll want to choose the first of these words as your next probe word.
+#13. Usually you'll want to choose the first of these words as your next probe word.
 #
-#12. Repeat at step 7 with your next probe word, but this time, use the remaining words
+#14. Repeat at step 10 with your next probe word, but this time, use the remaining words
 #    in the call to pruneWordsPerProbeResponse(), i.e.
 #
 #>>> ok_words_2, ccl2 = wa.pruneWordsPerProbeResponse(ok_words_1, [<probe_word>, <char_response_list>])
 #
 #    After a few iterations, the ok_words... list will be whittled down to the final answer word.
 #
-#13. Once you have a reduced list of possible answer words in ok_words_1 or ok_words_2,
+#15. Once you have a reduced list of possible answer words in ok_words_1 or ok_words_2,
 #    you might want to restrict the probe words to possible answers. This gives you a shot
 #    at nailing the answer on the next try. But if your guess is wrong you might not
 #    learn as much from it as choosing from among all probe words.
@@ -172,7 +228,7 @@
 #    like this:
 ##>>> scores_list_2 = wa.scoreProbeWords(ok_words_2, ok_words_2)
 #
-#14. Hard Mode
+#16. Hard Mode
 #    In Hard Mode, your probe word has to be one that meets the cue constraints already
 #    provided by game responses.  Pass the char_constraints you have accumulated so far.
 #    To obtain scores for candidate probe words, pass the most recent char_constraints_list
@@ -182,12 +238,21 @@
 #
 ################################################################################
 
-
-
+################################################################################
+#
 #Program Notes:
+#
+#-Kudos and gratitude are due to Devang Thakkar for his Wordle Archive program,
+# which lets you play past Wordle games.  This was very helpful to development of
+# wordleAssistant and it helped me to understand some subtleties of how the color
+#tiles work.
+#https://www.devangthakkar.com/wordle_archive/
+#https://github.com/DevangThakkar/wordle_archive
+#
 #-I tried using numpy arrays to store character constraints for efficiency, but that
 # turned out to be slower than just using sets.  I didn't figure out why.
-
+#
+################################################################################
 
 
 ################################################################################
@@ -198,12 +263,42 @@
 import json
 
 
+########################################
+#
+#Central functions
+#
+
+####################
+#
+#globals for normal program operation
+#
+
 gl_char_set = ('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j',
                'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
                'u', 'v', 'w', 'x', 'y', 'z')
 
+gl_correct_response = ['r', 'r', 'r', 'r', 'r']
 
-#word list is a list of remaining candidate answer words.
+#The number of words that are counted as a few, for purposes of deciding when
+#to take the extra step of computing expected moves, and other things.
+gl_few_words_len = 10
+
+#This was determined to be the best initial probe word by running scoreProbeWords()
+#on all words in probe_word_list.  That takes about 26 hours on my laptop.
+#1   ['raise', 61.00086393088553, 168]
+gl_first_probe_word = 'raise'
+
+
+#
+#
+####################
+
+
+
+#This function applies cue_list to adjust char_constraint_list and then filters
+#allowable answer words.
+#
+#word_list is a list of remaining candidate answer words.
 #cue_list a list of two entries:   [probe_word, char_response_list]
 #   where probe_word is a 5-character word
 #   and response list is a list of 5 cues in the set { 'r', 'l', 'y' }
@@ -211,12 +306,10 @@ gl_char_set = ('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j',
 #         'l' means yeLLow - the character is in the word but not in that position
 #         'y' means graY   - the character is not in the word
 #char_constraint_list is a list of list:
-#  char_constraint_list[0]-char_constraint_list[4]  are sets of allowed characters
+#  char_constraint_list[0] thru char_constraint_list[4]  are sets of allowed characters
 #    in each char position
 #  char_constraint_list[5] is a set of characters that must appear somewhere.
 #
-#This function applies cue_list to adjust char_constraint_list and then filters
-#allowable answer words.
 #Returns two values:  new_allowable_word_list, new_char_constraint_list
 #If you pass in a char_constraint_list that already constrains some of the characters,
 #then the new_char_constraint_list returned will add constraints to that based on
@@ -234,13 +327,7 @@ def pruneWordsPerProbeResponse(word_list, cue_list, char_constraint_list = None)
     return ok_words, new_char_constraint_list
 
 
-gl_correct_response = ['r', 'r', 'r', 'r', 'r']
-
-#The number of words that are counted as a few, for purposes of deciding when
-#to take the extra step of computing expected moves, and other things.
-gl_few_words_len = 10
-
-#Run through all words in candidate_probe_word_list and test it as the probe word.
+#Run through all words in candidate_probe_word_list and test as the probe word.
 #For each such probe word, run through all words in remaining_word_list pretending
 #it is the correct word.  For each hypothesized correct word compute the
 #cue_list, and from that, a hypothetical char_constraint_list.
@@ -251,25 +338,33 @@ gl_few_words_len = 10
 #so that they meet char constraints from previous cues.  This is used for "hard mode"
 #in which you can only submit probe words that meet all cues returned by previous
 #submissions.
-#Returns a list of tuple: (probe_word, ave_words_remaining, max_words_remaining)
+#If the remaining_word_list is small, then in addition, compute an expected moves score,
+#which is the expected moves to completion if that probe word is entered.
+#Returns a list of tuple: (probe_word, ave_words_remaining, max_words_remaining)  or
+#                         (probe_word, ave_words_remaining, max_words_remaining, expected_moves)
 def scoreProbeWords(remaining_word_list, candidate_probe_word_list,
                     probe_word_char_constraint_list = None,
-                    print_p = False):
+                    print_p = True):
     if len(remaining_word_list) == 0:
         return None
-#    if len(remaining_word_list) == 1:
-#        return [(remaining_word_list[0], 0, 0)]
+
+    #for command line feedback
+    dot_freq = int(10000/len(remaining_word_list))
     probe_word_score_list = []
+
+    #deal with hard mode
     if probe_word_char_constraint_list != None:
         qualified_candidate_probe_word_list = \
              pruneWordsPerCharConstraints(candidate_probe_word_list, probe_word_char_constraint_list)
         print('Hard Mode: pruning candidate_probe_word_list down from ' + str(len(candidate_probe_word_list)) + ' to ' + str(len(qualified_candidate_probe_word_list)) + ' candidates that meet char constraints')
     else:
         qualified_candidate_probe_word_list = candidate_probe_word_list
+
+    #main loop over probe_words
     probe_word_count = 0
     for probe_word in qualified_candidate_probe_word_list: #consider all candidate probe words, even ones
                                                            #that are not allowable
-        #print('\nprobe_word: ' + probe_word)        
+        #print('\nprobe_word: ' + probe_word)  
         remaining_words_sum = 0
         max_remaining_words = 0
         expected_moves_sum = 0
@@ -278,7 +373,7 @@ def scoreProbeWords(remaining_word_list, candidate_probe_word_list,
             #Only if the remaining words have been pruned down to a small number, 
             #count expected moves to answer.  This function is recursive so cannot be
             #used with a large remaining_word_list
-            if probe_word in remaining_word_list and len(remaining_word_list) < gl_few_words_len:
+            if probe_word in remaining_word_list and len(remaining_word_list) <= gl_few_words_len:
                 expected_moves = countExpectedMovesToAnswer(probe_word, hypothetical_correct_word,
                                                             remaining_word_list)
                 expected_moves_sum += expected_moves
@@ -299,103 +394,33 @@ def scoreProbeWords(remaining_word_list, candidate_probe_word_list,
         if expected_moves_sum > 0:
             probe_word_score.append(expected_moves_sum/len(remaining_word_list))
         probe_word_count += 1
-        if (len(remaining_word_list) > 50 and probe_word_count % 1000 == 0) or print_p:
-            print(str(probe_word_count) + '  ' + str(probe_word_score))
         probe_word_score_list.append(probe_word_score)
 
-        #print('probe_word: ' + probe_word + ' remaining_words_sum: ' + str(remaining_words_sum))
+        #command line feedback
+        if (len(remaining_word_list) > 50 and probe_word_count % 1000 == 0) or print_p:
+            if dot_freq > 0:
+                print('')
+            print(str(probe_word_count) + '  ' + str(probe_word_score))
+        if dot_freq > 0 and probe_word_count % dot_freq == 0:
+            print('.', end='', flush=True)
 
-        
+    if dot_freq > 0:
+        print('')
     probe_word_score_list.sort(key = lambda x: x[1])
-    print('top scores:')
-    for score in probe_word_score_list[0:20]:
-        print(str(score))
+    if print_p:
+        print('top scores:')
+        for score in probe_word_score_list[0:20]:
+            print(str(score))
     return probe_word_score_list
-            
-
-#score_list is a list of tuple:  (word, float average_allowable_words, float max_allowable_words)
-#This returns a list of scores that have word in allowable_words.
-#This is useful if you want to restrict your probe word to one of the remaining allowable words
-#but you want to choose the one with the best score).
-def getScoresWithAllowableWords(score_list, allowable_words):
-    ok_scores = []
-    for score_tup in score_list:
-        word = score_tup[0]
-        if word in allowable_words:
-            ok_scores.append(score_tup)
-    return ok_scores
-
-#This is a utility to see what scores some possible probe word have
-#prints them in order of average remaining words.
-def printScoresForWords(score_list, word_list):
-    ok_scores = []
-    for score in score_list:
-        if score[0] in word_list:
-            ok_scores.append(score)
-    ok_scores.sort(key = lambda x: x[1])
-    for score in ok_scores:
-        print(str(score))
 
 
-#this is a utility to see what score a probe word has
-def getScoreForWord(score_list, word):
-    for score in score_list:
-        if score[0] == word:
-            return score
-
-
-#a utility for development and debugging
-#enter a probe word and wordle response as a string, like
-#>>> cl_raise = aw.makeCueListForResponse('raise', 'ylyyl')
-#Returns a cue_list of the form ['raise', ['y', 'l', 'y', 'y', 'l']]
-def makeCueListForResponse(probe_word, str_response):
-    if len(probe_word) != 5 or len(str_response) != 5:
-        print('probe and str_response need to be len 5')
-        return
-    response_list = []
-    for i in range(5):
-        response_list.append(str_response[i])
-    return [probe_word, response_list]
-
-
-#a utility for development and debugging
-#cue_list_list is a list of cue_list:  [probe_word, response_list]
-#This starts with the unconstrained char_constraint_list and successively applies
-#the cue_lists, printing out each new_char_constraint_list along the way.
-def composeCCL(cue_list_list):
-    ccl_init = makeCharConstraintList()
-    ccl_next = ccl_init
-    for cue_list in cue_list_list:
-        print('\n applying cue_list: ' + str(cue_list))
-        ccl_next = updateCharConstraintList(cue_list, ccl_next)
-        printCharConstraintList(ccl_next)
-    return ccl_next
-
-
-
-        
-
-#char_constraint_list is a list of list
-#  list[0]-list[4]  are sets of allowed characters in each char position
-#  list[5] is a set of characters that must appear somewhere
-def printCharConstraintList(char_constraint_list):
-    for i in range(5):
-        listified = list(char_constraint_list[i])
-        listified.sort()
-        print(str(i) + ' (' + str(listified) + ')')
-    print('required: ' + str(char_constraint_list[5]))
-
-
-        
-
-    
 
 #This emulates what the Wordle game does when you enter a probe word.
-#This is my updated version that matches the actual wordle game by marking a
+#This is my updated version that tries to match the actual wordle game by marking a
 #probe character as yellow only if it occurs in some other column not already
 #guessed correctly.
-#It marks a probe character as gray if that character appears in another
-#column where it belongs, so is marked as green there.
+#This version marks a probe character as gray even if that character appears in another
+#column where it belongs, i.e. is marked as green there.
 #For example:
 #  answer_word:    H E R O N
 #  probe_word      E R R O R
@@ -444,6 +469,7 @@ def makeCharConstraintList():
     return char_constraint_list
 
 
+
 #Applies the character constraints in char_constraint_list to filter out unallowable
 #words from word_list.
 #This is the revised version that takes advantage of the fact that the required_char
@@ -485,15 +511,16 @@ def pruneWordsPerCharConstraints(word_list, char_constraint_list):
     return ok_words
 
 
-
+#This function returns a new char_constraint_list that updates the char_constraint_list
+#passed according to the char_responses in cue_list.
+#
 #char_constraint_list is a list of set of char
 #The first 5 elements are char positions, for chars allowed in that position.
 #The 6th is a set of chars that the word must have in a column that is not
 #correct yet.  These are characters looking for a position.
 #cue_list a list of two entries:   [probe_word, char_response_list]
 #where char_response_list is a list of 5 strings like   ['y', 'y', 'l', 'r', 'l']
-#This returns a new char_constraint_list that updates the char_constraint_list
-#passed according to the char_responses in cue_list.
+#
 #This revision takes into account that a response char is yellow l only if the
 #probe char occurs elsewhere in the word *in an incorrect position*.
 #The logic of this function is kind of complicated because the rules for marking
@@ -575,13 +602,17 @@ def updateCharConstraintList(cue_list, char_constraint_list):
 
 
 
-
-
 #This is recursive on words in word_list so cannot be used with a very long word list.
-#This returns the expected number of moves to get to the answer assuming the uniform
+#This returns the expected number of moves to get to the answer assuming uniform
 #probability of selecting every word in word_list.
-#That is not right, however, because the user will more likey select the recommended word.
-def countExpectedMovesToAnswer(probe_word, hypothetical_correct_word, word_list, move_count = 1, indent = ''):
+#That is not perfectly right, though, because the user will more likey select the
+#recommended word than other presented to them. However, at this stage, usually
+#most or all of the words have approximately the same word count score, so this
+#approximation of expected moves is probably pretty close.
+def countExpectedMovesToAnswer(probe_word, hypothetical_correct_word, word_list,
+                               move_count = 1, indent = ''):
+    #indent and print statements are left over from development, and for entertainment
+    #for later developers.
     #print(indent + 'counting expected moves for probe word: ' + probe_word + '  hyp_correct_word: ' + hypothetical_correct_word + '  word_list:' + str(word_list) + ' move_count: ' + str(move_count))
 
     probe_response = markProbeWordAgainstCorrectWord(probe_word, hypothetical_correct_word)
@@ -601,72 +632,270 @@ def countExpectedMovesToAnswer(probe_word, hypothetical_correct_word, word_list,
 
 
 
+def importWordList(word_filename = None):
+    if word_filename == None:
+        word_filename = gl_word_filename
+    word_list = []
+    with open(word_filename, encoding='utf8') as file:
+        for line in file:
+            if line.find('#') >= 0:
+                continue
+            word = line[:-1]
+            if len(word) != 5:
+                continue
+            word_list.append(word)
+    return word_list
+
+#Collected from the wordle javascript file
+#https://www.powerlanguage.co.uk/wordle/main.e65ce0a5.js
+gl_probe_word_filename = 'wordle-probe-words.text'
+gl_answer_word_filename = 'wordle-answer-words.text'
+
+gl_probe_word_list = importWordList(gl_probe_word_filename)
+gl_answer_word_list = importWordList(gl_answer_word_filename)
 
 
+#
+#
+######################################## central functions
+
+########################################
+#
+#Utilities for develoment
+#
+
+#score_list is a list of tuple:  (word, float average_allowable_words, float max_allowable_words)
+#This returns a list of scores that have probe_word in allowable_words.
+#This is useful if you want to restrict your probe word to one of the remaining allowable words
+#but you want to choose the one with the best score).
+def getScoresWithAllowableWords(score_list, allowable_words):
+    ok_scores = []
+    for score_tup in score_list:
+        word = score_tup[0]
+        if word in allowable_words:
+            ok_scores.append(score_tup)
+    return ok_scores
+
+#This is a utility to see what scores some possible probe word have
+#prints them in order of average remaining words.
+def printScoresForWords(score_list, word_list):
+    ok_scores = []
+    for score in score_list:
+        if score[0] in word_list:
+            ok_scores.append(score)
+    ok_scores.sort(key = lambda x: x[1])
+    for score in ok_scores:
+        print(str(score))
 
 
-gl_first_probe_word = 'raise'
+#this is a utility to see what score a probe word has
+def getScoreForWord(score_list, word):
+    for score in score_list:
+        if score[0] == word:
+            return score
 
-def runGame(initial_probe_word = None):
+#a utility for development and debugging
+#enter a probe word and wordle response as a string, like
+#>>> cl_raise = aw.makeCueListForResponse('raise', 'ylyyl')
+#Returns a cue_list of the form ['raise', ['y', 'l', 'y', 'y', 'l']]
+def makeCueListForResponse(probe_word, str_response):
+    if len(probe_word) != 5 or len(str_response) != 5:
+        print('probe and str_response need to be len 5')
+        return
+    response_list = []
+    for i in range(5):
+        response_list.append(str_response[i])
+    return [probe_word, response_list]
+
+
+#a utility for development and debugging
+#cue_list_list is a list of cue_list:  [probe_word, response_list]
+#This starts with the unconstrained char_constraint_list and successively applies
+#the cue_lists, printing out each new_char_constraint_list along the way.
+def composeCCL(cue_list_list):
+    ccl_init = makeCharConstraintList()
+    ccl_next = ccl_init
+    for cue_list in cue_list_list:
+        print('\n applying cue_list: ' + str(cue_list))
+        ccl_next = updateCharConstraintList(cue_list, ccl_next)
+        printCharConstraintList(ccl_next)
+    return ccl_next
+
+#char_constraint_list is a list of list
+#  list[0]-list[4]  are sets of allowed characters in each char position
+#  list[5] is a set of characters that must appear somewhere
+def printCharConstraintList(char_constraint_list):
+    for i in range(5):
+        listified = list(char_constraint_list[i])
+        listified.sort()
+        print(str(i) + ' (' + str(listified) + ')')
+    print('required: ' + str(char_constraint_list[5]))
+
+#
+#
+######################################## utilities for development
+        
+
+########################################
+#
+#Command line game runner
+#
+
+
+gl_response_char_color_dict = {'r': 'gReen',
+                               'l': 'yeLLow',
+                               'y': 'graY'}
+    
+
+#The main user function.
+def runGame(hard_mode_p = False, initial_probe_word = None):
     global gl_last_ccl
     if initial_probe_word == None:
         initial_probe_word = gl_first_probe_word
-    hard_mode_p = False
+    #allow the first arg to invoke help
+    if hard_mode_p in ('h', 'help', 'args', '?'):
+        printHelp()
+
     remaining_word_list = gl_answer_word_list
     probe_word_list = gl_probe_word_list
     char_constraint_list = makeCharConstraintList()
-    user_input = 'start'
+    probe_word_scores_remaining_words = None #initialize
+
+    #allow user input of initial probe word from the input/response loop
+    if initial_probe_word == 'x':
+        initial_probe_word = None
+        while initial_probe_word == None:
+            user_input = input('input first probe word: ')
+            if user_input == '':    #exit
+                return
+            initial_probe_word = parseUserInputProbeWord(user_input, probe_word_list)
+
+    #main loop
     probe_word = initial_probe_word
+    user_input = 'start'  #something not ''
     round = 0
     while user_input != '':
-        user_input = input('input response to probe word \"' + probe_word + '\": ')
+        user_input = input('Please enter response to probe word \"' + probe_word + '\": ')
         char_response = parseUserInputToCharResponse(user_input)
         if char_response == None:
+            user_input = 'retry'  #retry input of game char response
             continue
-        print(str(char_response))
+        if char_response == 'exit':
+            return
+        printFullColorCharResponse(char_response)
         cue_list = [probe_word, char_response]
         remaining_word_list, char_constraint_list = \
                 pruneWordsPerProbeResponse(remaining_word_list, cue_list, char_constraint_list)
-        gl_last_ccl = char_constraint_list
+        gl_last_ccl = char_constraint_list  #development and debugging
         print('words_remaining: ' + str(len(remaining_word_list)))
+        if len(remaining_word_list) == 0:
+            print('no answer words remaining')
+            return
         if len(remaining_word_list) < gl_few_words_len:
             print(str(remaining_word_list))
-        #set score_char_constraint_list per hard_mode_p
-        if hard_mode_p:
-            score_char_constraint_list = char_constraint_list
-        else:
-            score_char_constraint_list = None
         if len(remaining_word_list) == 1:
             print('answer word: ' + remaining_word_list[0])
             return
 
-        if round == 0 and \
-           probe_word == 'raise' and \
-           gl_precomputed_first_probe_word_dict_raise != None:
-            print('looking up scores from dict')
-            probe_word_scores = gl_precomputed_first_probe_word_dict_raise.get(tuple(char_response))
-            for score in probe_word_scores[0:20]:
-                print(str(score))            
+        #make a flag telling whether a precomputed score dict is being used on this round
+        if (hard_mode_p and \
+            round == 0 and \
+            probe_word == 'raise' and \
+            gl_precomputed_first_probe_word_dict_raise_hard_mode != None) or \
+            (not hard_mode_p and \
+             round == 0 and \
+             probe_word == 'raise' and \
+             gl_precomputed_first_probe_word_dict_raise_normal_mode != None):
+            use_dict_p = True
         else:
-            probe_word_scores = scoreProbeWords(remaining_word_list, probe_word_list,
-                                                score_char_constraint_list)
-        if len(remaining_word_list) < 20:
-            print('scores from remaining words: ')
+            use_dict_p = False
+        
+        #set score_char_constraint_list per hard_mode_p, and compute probe word scores accordingly
+        #hard mode
+        if hard_mode_p:
+            score_char_constraint_list = char_constraint_list
+            if use_dict_p:
+                print('...looking up scores from dict (hard mode)')
+                probe_word_scores = \
+                    gl_precomputed_first_probe_word_dict_raise_hard_mode.get(tuple(char_response))
+            else:
+                if len(remaining_word_list) > 100:
+                    print('many possible answer words to consider so this could take several minutes... ')
+                probe_word_scores = scoreProbeWords(remaining_word_list, probe_word_list,
+                                                    score_char_constraint_list, False)
+            
+        #normal mode
+        else:
+            score_char_constraint_list = None
+            if use_dict_p:
+                print('...looking up scores from dict (normal mode)')
+                probe_word_scores = \
+                    gl_precomputed_first_probe_word_dict_raise_normal_mode.get(tuple(char_response))
+            else:
+                if len(remaining_word_list) > 100:
+                    print('...many possible answer words to consider so this could take several minutes... ')
+                probe_word_scores = scoreProbeWords(remaining_word_list, probe_word_list,
+                                                    score_char_constraint_list, False)
+
+        #report scores and recommendation
+        if probe_word_scores == None:
+            print('no remaining answer words for this set of probes and responses')
+            return
+
+        if use_dict_p:
+            print('scores from top 10 probe words:')
+        else:
+            print('top 10 scores from all probe words (' + str(len(probe_word_scores)) + '):')
+        printProbeWordScores(probe_word_scores, 20)
+
+        #for investigating the program's behavior
+        global gl_last_probe_word_scores
+        gl_last_probe_word_scores = probe_word_scores
+        #
+        if len(remaining_word_list) <= 40:
+            #there are few enough remaining words that it is worth re-scoring them which will
+            #now append expected moves"
             probe_word_scores_remaining_words = scoreProbeWords(remaining_word_list, remaining_word_list,
-                                                                score_char_constraint_list)
+                                                                score_char_constraint_list, False)
+        else:
+            probe_word_scores_remaining_words = []
+            remaining_word_set = set(remaining_word_list)
+            for score in probe_word_scores:
+                word = score[0]
+                if word in remaining_word_set:
+                    probe_word_scores_remaining_words.append(score)
+        if len(probe_word_scores_remaining_words) > 0:
+            print('top scores from ' + str(len(probe_word_scores_remaining_words)) + ' remaining answer words:')
+            printProbeWordScores(probe_word_scores_remaining_words, gl_few_words_len)
+  
+        #Alert the user if they have a choice to make about picking a probe word that might
+        #possibly be the answer word but on average will perform worse than a non-answer probe word.
+        if probe_word_scores_remaining_words != None and \
+           len(probe_word_scores_remaining_words) > 0 and \
+           (probe_word_scores[0][1] < probe_word_scores_remaining_words[0][1] or \
+            probe_word_scores[0][2] < probe_word_scores_remaining_words[0][2]):
+            printTradeoffChoiceString(probe_word_scores[:10], probe_word_scores_remaining_words[:10],
+                                      remaining_word_list)
+
+        #iterate to next probe word
         probe_word = None
         while probe_word == None:
-            user_input = input('input next probe word: ')
+            user_input = input('Please enter your next probe word: ')
             if user_input == '':   #exit
                 break
             probe_word = parseUserInputProbeWord(user_input, probe_word_list)
+            if probe_word == 'exit':
+                return
         round += 1
 
-
+        
 def parseUserInputToCharResponse(user_input):
     char_response = []
+    user_input = user_input.lower()
+    if user_input in ('q', 'quit', 'exit', 'done', 'stop'):
+        return 'exit'
     if len(user_input) != 5:
-        print('please enter game response of r = green, l = yellow, y = gray for five characters')
+        print('Please enter game response of r = green, l = yellow, y = gray for five characters')
         return None
     for i_char in range(5):
         char_i = user_input[i_char]
@@ -675,20 +904,133 @@ def parseUserInputToCharResponse(user_input):
             return None
         char_response.append(char_i)
     return char_response
-        
+
+
 def parseUserInputProbeWord(user_input, probe_word_list):
-    if user_input == '':
-        return ''
+    user_input = user_input.lower()
+    if user_input in ('', 'q', 'quit', 'exit', 'done', 'stop'):
+        return 'exit'
     if len(user_input) != 5:
-        print('please enter a 5-character word')
+        print('Please enter a 5-character word')
         return None
     if user_input not in probe_word_list:
         print('user_input: /' + user_input + '/ not in probe_word_list')
         print('probe word must be in the list of ' + str(len(probe_word_list)) + ' probe words')
         return None
     return user_input
-    
 
+
+#char_response is a tuple of char like ('y', 'l', 'r', 'l', 'y')
+def printFullColorCharResponse(char_response):
+
+    if len(char_response) != 5:
+        print('could not interpret as a color tile response: ' + char_response)
+        return
+    response_str = 'Wordle game response:   "'
+    for response_char in char_response:
+        response_str += gl_response_char_color_dict.get(response_char) + '  '
+    response_str = response_str[:-2]
+    print(response_str + '"')
+
+
+def printProbeWordScores(probe_word_scores, num=20):
+    if probe_word_scores == None or len(probe_word_scores) < 1:
+        return
+    has_expected_moves_p = False
+    if len(probe_word_scores[0]) > 3:
+        has_expected_moves_p = True
+#    for score in probe_word_scores[0:20]:
+#        print(str(score))
+    if has_expected_moves_p:
+        print(' probe       average       max       expected')
+        print('  word        words       words      moves to')
+        print('            remaining   remaining     answer')
+        for score in probe_word_scores[0:num]:
+            if len(score) > 3:
+                print(' {0:8}     {1:.3f}  {2:8}         {3:.3f}'.format(score[0], score[1], score[2], score[3]))
+            else:
+                print(' {0:8}     {1:.3f}  {2:8}'.format(score[0], score[1], score[2]))                
+    else:
+        print(' probe       average       max')
+        print('  word        words       words')
+        print('            remaining   remaining')
+        for score in probe_word_scores[0:num]:
+            print(' {0:8}     {1:.3f}  {2:8}'.format(score[0], score[1], score[2]))
+
+
+
+#Alert the user if they have a choice to make about picking a probe word that might
+#possibly be the answer word but on average will perform worse than a non-answer probe word.
+def printTradeoffChoiceString(top_probe_word_scores, top_answer_word_scores_remaining_words,
+                              remaining_word_list):
+    probe_better_list = []
+    better_ave_p = False
+    better_max_p = False
+    for probe_word_score in top_probe_word_scores:
+        probe_word = probe_word_score[0]
+        probe_ave = probe_word_score[1]
+        probe_max = probe_word_score [2]
+        if probe_word in remaining_word_list:
+            continue
+        if better_ave_p and better_max_p:
+            break        
+        for answer_word_score in top_answer_word_scores_remaining_words:
+            answer_ave = answer_word_score[1]
+            answer_max = answer_word_score[2]
+            if probe_ave < answer_ave and not better_ave_p:
+                better_ave_p = True
+                if probe_word not in probe_better_list:
+                    probe_better_list.append(probe_word)
+
+            if probe_max < answer_max and not better_max_p:
+                better_max_p = True
+                if probe_word not in probe_better_list:
+                    probe_better_list.append(probe_word)
+
+    probe_better_count = len(probe_better_list)
+    if probe_better_count == 0:
+        print('a1')
+        return
+    if probe_better_count == 1:
+        probe_descriptor_str = 'There is a probe word* that is not a potential answer word'
+    else:
+        probe_descriptor_str = 'There are ' + str(probe_better_count) + ' probe words* that are not potential answer words'
+    
+    print('\nNotice: ' + probe_descriptor_str + ' that will leave')
+    print('fewer average number of words remaining, or fewer maximum number of words remaining,')
+    print('than some of the candidate answer words (bottom list).')  
+    print('Decide whether to play it safe with a probe word that cannot win on the next move,')
+    print('or else gamble---at the risk of taking more moves to find the answer word.')
+    probe_better_words_str = ''
+    for probe_better_word in probe_better_list:
+        probe_better_words_str += probe_better_word + ' '
+    probe_better_words_str = probe_better_words_str[:-1]
+    print('*(' + probe_better_words_str + ')\n')
+
+
+
+def printHelp():
+    print('\n***Welcome to wordleAssistant ***')
+    print(' args: runGame(hard_mode_p = False, initial_probe_word = None)')
+    print(' To run in Hard mode, call runGame(True).')
+    print(" initial_probe_word defaults to '" + gl_first_probe_word + "'.")
+    print(" To enter your own initial probe word, call runGame with your word")
+    print(" in quotes, like runGame(False, 'bench'), or else call as runGame(False, 'x').")
+    print(' Type q to quit')
+
+
+#
+#
+############################## game runner
+
+
+##############################
+#
+#Precomputed dictionaries of scores for game responses to the preferred
+#initial_probe_word.
+#
+    
+        
 
 #This precomputes the score_list the program would return when told the Wordle game's
 #response to the first probe word.
@@ -753,7 +1095,6 @@ def completePartialCombo(partial_combo):
     return ret_list
 
 
-
 def writeProbeDictToFile(probe_dict, filename=None, header_str=''):
     if filename == None:
         filename = gl_precomputed_probe_dict_filename
@@ -814,57 +1155,18 @@ except:
     print('could not read precomputed probe dict from file ' + gl_precomputed_probe_dict_raise_hard_mode_filename)
     
 
-
-
-
-#development
-def test1():
-    word_list = importWordList()
-    
-    char_response_list = ['house', ['r', 'r', 'r', 'r', 'r']]
-    print('\n' + str(char_response_list))
-    ok_words, new_char_constraint_list = pruneWordsPerProbeResponse(word_list, char_response_list)
-    print(str(len(ok_words)))
-    if len(ok_words) < 20:
-        print(str(ok_words))
-    printCharConstraintList(new_char_constraint_list)
-
-    char_response_list = ['house', ['l', 'l', 'l', 'l', 'l']]
-    print('\n' + str(char_response_list))
-    ok_words, new_char_constraint_list = pruneWordsPerProbeResponse(word_list, char_response_list)
-    print(str(len(ok_words)))
-    if len(ok_words) < 20:
-        print(str(ok_words))
-    printCharConstraintList(new_char_constraint_list)
-    
-
-
-def importWordList(word_filename = None):
-    if word_filename == None:
-        word_filename = gl_word_filename
-    word_list = []
-    with open(word_filename, encoding='utf8') as file:
-        for line in file:
-            if line.find('#') >= 0:
-                continue
-            word = line[:-1]
-            if len(word) != 5:
-                continue
-            word_list.append(word)
-    return word_list
-
-#Collected from the wordle javascript file
-#https://www.powerlanguage.co.uk/wordle/main.e65ce0a5.js
-gl_probe_word_filename = 'wordle-probe-words.text'
-gl_answer_word_filename = 'wordle-answer-words.text'
-
-gl_probe_word_list = importWordList(gl_probe_word_filename)
-gl_answer_word_list = importWordList(gl_answer_word_filename)
-
 #
 #
+######################################## precomputed dictionaries
+#
+################################################################################ wordleAssistant program
+
+
+
 ################################################################################
-
+#
+#Archives
+#
 
 
 
