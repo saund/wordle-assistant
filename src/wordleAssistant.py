@@ -234,6 +234,11 @@ def pruneWordsPerProbeResponse(word_list, cue_list, char_constraint_list = None)
     return ok_words, new_char_constraint_list
 
 
+gl_correct_response = ['r', 'r', 'r', 'r', 'r']
+
+#The number of words that are counted as a few, for purposes of deciding when
+#to take the extra step of computing expected moves, and other things.
+gl_few_words_len = 10
 
 #Run through all words in candidate_probe_word_list and test it as the probe word.
 #For each such probe word, run through all words in remaining_word_list pretending
@@ -252,8 +257,8 @@ def scoreProbeWords(remaining_word_list, candidate_probe_word_list,
                     print_p = False):
     if len(remaining_word_list) == 0:
         return None
-    if len(remaining_word_list) == 1:
-        return [(remaining_word_list[0], 0, 0)]
+#    if len(remaining_word_list) == 1:
+#        return [(remaining_word_list[0], 0, 0)]
     probe_word_score_list = []
     if probe_word_char_constraint_list != None:
         qualified_candidate_probe_word_list = \
@@ -263,26 +268,44 @@ def scoreProbeWords(remaining_word_list, candidate_probe_word_list,
         qualified_candidate_probe_word_list = candidate_probe_word_list
     probe_word_count = 0
     for probe_word in qualified_candidate_probe_word_list: #consider all candidate probe words, even ones
-                                                           #that are not allowable 
+                                                           #that are not allowable
+        #print('\nprobe_word: ' + probe_word)        
         remaining_words_sum = 0
         max_remaining_words = 0
+        expected_moves_sum = 0
         for hypothetical_correct_word in remaining_word_list:
             char_response_list = markProbeWordAgainstCorrectWord(probe_word, hypothetical_correct_word)
+            #Only if the remaining words have been pruned down to a small number, 
+            #count expected moves to answer.  This function is recursive so cannot be
+            #used with a large remaining_word_list
+            if probe_word in remaining_word_list and len(remaining_word_list) < gl_few_words_len:
+                expected_moves = countExpectedMovesToAnswer(probe_word, hypothetical_correct_word,
+                                                            remaining_word_list)
+                expected_moves_sum += expected_moves
+            if char_response_list == gl_correct_response:
+                continue   #the correct probe says no more remaining words
             new_remaining_word_list, new_char_constraint_list = \
                  pruneWordsPerProbeResponse(remaining_word_list,
                                             [probe_word, char_response_list])
             num_remaining_words = len(new_remaining_word_list)
             remaining_words_sum += num_remaining_words
             max_remaining_words = max(num_remaining_words, max_remaining_words)
+            #print('hyp correct word: ' + hypothetical_correct_word + ' num_remaining_words:' + str(num_remaining_words) + ' : ' + str(new_remaining_word_list))
 
         if len(remaining_word_list) == 0:  #no valid words, return a high scoring nonsense response 
             return ['', 1000, 1000]
         ave_remaining_words = remaining_words_sum / len(remaining_word_list)
         probe_word_score = [probe_word, ave_remaining_words, max_remaining_words]
+        if expected_moves_sum > 0:
+            probe_word_score.append(expected_moves_sum/len(remaining_word_list))
         probe_word_count += 1
         if (len(remaining_word_list) > 50 and probe_word_count % 1000 == 0) or print_p:
             print(str(probe_word_count) + '  ' + str(probe_word_score))
         probe_word_score_list.append(probe_word_score)
+
+        #print('probe_word: ' + probe_word + ' remaining_words_sum: ' + str(remaining_words_sum))
+
+        
     probe_word_score_list.sort(key = lambda x: x[1])
     print('top scores:')
     for score in probe_word_score_list[0:20]:
@@ -320,6 +343,36 @@ def getScoreForWord(score_list, word):
         if score[0] == word:
             return score
 
+
+#a utility for development and debugging
+#enter a probe word and wordle response as a string, like
+#>>> cl_raise = aw.makeCueListForResponse('raise', 'ylyyl')
+#Returns a cue_list of the form ['raise', ['y', 'l', 'y', 'y', 'l']]
+def makeCueListForResponse(probe_word, str_response):
+    if len(probe_word) != 5 or len(str_response) != 5:
+        print('probe and str_response need to be len 5')
+        return
+    response_list = []
+    for i in range(5):
+        response_list.append(str_response[i])
+    return [probe_word, response_list]
+
+
+#a utility for development and debugging
+#cue_list_list is a list of cue_list:  [probe_word, response_list]
+#This starts with the unconstrained char_constraint_list and successively applies
+#the cue_lists, printing out each new_char_constraint_list along the way.
+def composeCCL(cue_list_list):
+    ccl_init = makeCharConstraintList()
+    ccl_next = ccl_init
+    for cue_list in cue_list_list:
+        print('\n applying cue_list: ' + str(cue_list))
+        ccl_next = updateCharConstraintList(cue_list, ccl_next)
+        printCharConstraintList(ccl_next)
+    return ccl_next
+
+
+
         
 
 #char_constraint_list is a list of list
@@ -327,26 +380,53 @@ def getScoreForWord(score_list, word):
 #  list[5] is a set of characters that must appear somewhere
 def printCharConstraintList(char_constraint_list):
     for i in range(5):
-        print(str(i) + ' ' + str(char_constraint_list[i]))
+        listified = list(char_constraint_list[i])
+        listified.sort()
+        print(str(i) + ' (' + str(listified) + ')')
     print('required: ' + str(char_constraint_list[5]))
 
 
         
 
-#returns a list length 5 in the range {'r', 'l', 'y'}
+    
+
 #This emulates what the Wordle game does when you enter a probe word.
+#This is my updated version that matches the actual wordle game by marking a
+#probe character as yellow only if it occurs in some other column not already
+#guessed correctly.
+#It marks a probe character as gray if that character appears in another
+#column where it belongs, so is marked as green there.
+#For example:
+#  answer_word:    H E R O N
+#  probe_word      E R R O R
+#Actual wordle     l y r r y   There is no R (probe char) in the answer word other
+#                              than the one already marked correctly.
+#returns a list length 5 in the range {'r', 'l', 'y'}
 def markProbeWordAgainstCorrectWord(probe_word, correct_word):
     char_response_list = []
+    #first build a char_response_list marking correct chars
     for i in range(5):
         probe_char_i = probe_word[i]
         if correct_word[i] == probe_char_i:
             char_response_list.append('r')
-        elif correct_word.find(probe_char_i) >= 0:
-            char_response_list.append('l')
         else:
             char_response_list.append('y')
+    #now take another pass switching to response char to yellow if the
+    #probe char occurs in another column that is not green
+    for i in range(5):
+        if char_response_list[i] == 'r':
+            continue
+        probe_char_i = probe_word[i]
+        #look for a match to probe_char_i elsewhere in the word...
+        for i_word in range(5):
+            if i_word == i:
+                continue
+            #...as long as it is isn't already a correct match
+            if correct_word[i_word] == probe_char_i and \
+               char_response_list[i_word] != 'r':
+                char_response_list[i] = 'l'
     return char_response_list
-        
+
 
 
 
@@ -366,11 +446,14 @@ def makeCharConstraintList():
 
 #Applies the character constraints in char_constraint_list to filter out unallowable
 #words from word_list.
+#This is the revised version that takes advantage of the fact that the required_char
+#list means that a character must occur somewhere where it is not already correct.
 #Returns a list of allowable words.
 def pruneWordsPerCharConstraints(word_list, char_constraint_list):
     ok_words = []
     for word in word_list:
         ok_p = True
+        #check if the word's chars are allowed by the char_constraint_list
         for i in range(5):
             if i >= len(word):
                 print('word is too short: ' + word + ' i: ' + str(i))
@@ -379,48 +462,153 @@ def pruneWordsPerCharConstraints(word_list, char_constraint_list):
             if char_i not in char_constraint_list[i]:
                 ok_p = False
                 break
+        if not ok_p:
+            continue
+        #make sure the word has any required characters looking for a placement
+        any_char_seeking_replacement_p = False
         for required_char in char_constraint_list[5]:
-            if word.find(required_char) < 0:
-                ok_p = False
+            seeking_placement_p = True
+            for i in range(5):
+                #if this is the only char allowed at this word pos, then
+                #it is already placed correctly
+                if len(char_constraint_list[i]) == 1 and \
+                   required_char in char_constraint_list[i]:
+                    continue
+                if word[i] == required_char:
+                    seeking_placement_p = False
+                    break
+            if seeking_placement_p:
+                any_char_seeking_replacement_p = True
                 break
-        if ok_p:
+        if not any_char_seeking_replacement_p:
             ok_words.append(word)
     return ok_words
 
 
-#char_constraint_list is a list of list of char
+
+#char_constraint_list is a list of set of char
 #The first 5 elements are char positions, for chars allowed in that position.
-#The 6th is a list of chars that the word must have somewhere.
+#The 6th is a set of chars that the word must have in a column that is not
+#correct yet.  These are characters looking for a position.
 #cue_list a list of two entries:   [probe_word, char_response_list]
 #where char_response_list is a list of 5 strings like   ['y', 'y', 'l', 'r', 'l']
 #This returns a new char_constraint_list that updates the char_constraint_list
 #passed according to the char_responses in cue_list.
+#This revision takes into account that a response char is yellow l only if the
+#probe char occurs elsewhere in the word *in an incorrect position*.
+#The logic of this function is kind of complicated because the rules for marking
+#tiles as yellow and gray are a bit subtle.  I am not 100% sure this is correct,
+#but I have stopped finding failure cases after about 50 trials.
 #Does not modify char_constraint_list.
 def updateCharConstraintList(cue_list, char_constraint_list):
     new_char_constraint_list = [ set(pos_chrs) for pos_chrs in char_constraint_list ]
     probe_word = cue_list[0]
     char_response_list = cue_list[1]
+    chars_to_consider = {}  #key = char
+                            #value: count of char occurrences
     for i_pos in range(5):
         probe_char = probe_word[i_pos]
         char_response = char_response_list[i_pos]
-        if char_response == 'y':        #gray - remove probe_char entirely
-            for i_pos in range(5):
-                new_char_constraint_list[i_pos].discard(probe_char)
+        if char_response == 'y':        #gray - remove probe_char entirely from this position
+            new_char_constraint_list[i_pos].discard(probe_char)
+            #if probe_char appears elsewhere as yellow, then we cannot be safe in eliminating
+            #it from other positions
+            char_appears_elsewhere_y_p = False
+            for i_pos2 in range(5):
+                if probe_word[i_pos2] == probe_char:
+                    if char_response_list[i_pos2] == 'l':
+                        char_appears_elsewhere_y_p = True
+                        break
+            #safe to say the char is not some another position either.
+            if not char_appears_elsewhere_y_p:
+                for i_pos2 in range(5):
+                    #don't much with a position if it is known
+                    if len(new_char_constraint_list[i_pos2]) == 1:
+                        continue
+                    new_char_constraint_list[i_pos2].discard(probe_char)    
+                    
         elif char_response == 'l':      #yellow - remove probe_char only from i_pos chars
             new_char_constraint_list[i_pos].discard(probe_char)
-            new_char_constraint_list[5].add(probe_char)         #but add to required set 
+            #Add a char tagged as yellow to required set only if it is not accounted for
+            #by a known character that is not labeled 'r' on this cue_response.
+            #Example: wordle archive 159: "raise", "prong", "debts": don't add [2] 'e'
+            #to the required set because it is known to occur at [4] and does not appear
+            #at [4] in 'debts'
+            make_required_p = True
+            #but check if this char is actually accounted for by a known char
+            for i_pos2 in range(5):
+                if i_pos2 == i_pos:
+                    continue
+                ccl_ipos2 = char_constraint_list[i_pos2]
+                #if i_pos2 is known to be probe_char...
+                if len(ccl_ipos2) == 1 and probe_char in ccl_ipos2:
+                    #...and probe_char is not at this other position in the probe word...
+                    if probe_word[i_pos2] != probe_char:
+                        #...then that accounts for the yellow tile
+                        make_required_p = False
+            if make_required_p:
+                new_char_constraint_list[5].add(probe_char)
+            #This could be slightly stronger by counting the number of yellows, and in 
+            #principle determine that a required_char must occur in more than one position.
+            
         elif char_response == 'r':      #green - only probe_char allowed in i_pos chars
             new_char_constraint_list[i_pos] = set([probe_char])
-            new_char_constraint_list[5].add(probe_char)         #and add to required set   
+            #Do not add to required set because this char is not looking for a placement.
+            #But the character can be removed from required_set *if* it does not appear
+            #at some other location with a y (seeking placement) response.
+            if probe_char in new_char_constraint_list[5]:
+                ok_to_remove_p = True
+                for i_pos2 in range(5):
+                    if i_pos2 == i_pos:
+                        continue
+                    if char_response_list[i_pos2] != 'l':
+                        continue
+                    if probe_word[i_pos2] == probe_char:
+                        ok_to_remove_p = False
+                if ok_to_remove_p:
+                    new_char_constraint_list[5].discard(probe_char)
         else:
             print('unrecognized char_response: ' + str(char_response))
             return
     return new_char_constraint_list
 
 
+
+
+
+
+#This is recursive on words in word_list so cannot be used with a very long word list.
+#This returns the expected number of moves to get to the answer assuming the uniform
+#probability of selecting every word in word_list.
+#That is not right, however, because the user will more likey select the recommended word.
+def countExpectedMovesToAnswer(probe_word, hypothetical_correct_word, word_list, move_count = 1, indent = ''):
+    #print(indent + 'counting expected moves for probe word: ' + probe_word + '  hyp_correct_word: ' + hypothetical_correct_word + '  word_list:' + str(word_list) + ' move_count: ' + str(move_count))
+
+    probe_response = markProbeWordAgainstCorrectWord(probe_word, hypothetical_correct_word)
+    if probe_response == gl_correct_response:
+        #print(indent + '***probe_word: ' + probe_word + ' matches correct word, returning move_count: ' + str(move_count))
+        return move_count
+    move_count += 1
+    reduced_word_list, ccl = pruneWordsPerProbeResponse(word_list, [probe_word, probe_response])
+    #print(indent + 'reduced_word_list: ' + str(reduced_word_list))
+    frac = 1/len(reduced_word_list)
+    expect = 0
+    for next_probe_word in reduced_word_list:
+        #print(indent + 'next_probe_word: ' + next_probe_word + '  frac: ' + str(frac))
+        expect += frac * countExpectedMovesToAnswer(next_probe_word, hypothetical_correct_word,
+                                                    reduced_word_list, move_count, indent + '   ')
+    return expect
+
+
+
+
+
+
+
 gl_first_probe_word = 'raise'
 
 def runGame(initial_probe_word = None):
+    global gl_last_ccl
     if initial_probe_word == None:
         initial_probe_word = gl_first_probe_word
     hard_mode_p = False
@@ -429,6 +617,7 @@ def runGame(initial_probe_word = None):
     char_constraint_list = makeCharConstraintList()
     user_input = 'start'
     probe_word = initial_probe_word
+    round = 0
     while user_input != '':
         user_input = input('input response to probe word \"' + probe_word + '\": ')
         char_response = parseUserInputToCharResponse(user_input)
@@ -438,9 +627,11 @@ def runGame(initial_probe_word = None):
         cue_list = [probe_word, char_response]
         remaining_word_list, char_constraint_list = \
                 pruneWordsPerProbeResponse(remaining_word_list, cue_list, char_constraint_list)
+        gl_last_ccl = char_constraint_list
         print('words_remaining: ' + str(len(remaining_word_list)))
-        if len(remaining_word_list) < 10:
+        if len(remaining_word_list) < gl_few_words_len:
             print(str(remaining_word_list))
+        #set score_char_constraint_list per hard_mode_p
         if hard_mode_p:
             score_char_constraint_list = char_constraint_list
         else:
@@ -448,18 +639,28 @@ def runGame(initial_probe_word = None):
         if len(remaining_word_list) == 1:
             print('answer word: ' + remaining_word_list[0])
             return
-        probe_word_scores = scoreProbeWords(remaining_word_list, probe_word_list,
-                                            score_char_constraint_list)
+
+        if round == 0 and \
+           probe_word == 'raise' and \
+           gl_precomputed_first_probe_word_dict_raise != None:
+            print('looking up scores from dict')
+            probe_word_scores = gl_precomputed_first_probe_word_dict_raise.get(tuple(char_response))
+            for score in probe_word_scores[0:20]:
+                print(str(score))            
+        else:
+            probe_word_scores = scoreProbeWords(remaining_word_list, probe_word_list,
+                                                score_char_constraint_list)
         if len(remaining_word_list) < 20:
             print('scores from remaining words: ')
-            probe_word_scores = scoreProbeWords(remaining_word_list, remaining_word_list,
-                                                score_char_constraint_list)
+            probe_word_scores_remaining_words = scoreProbeWords(remaining_word_list, remaining_word_list,
+                                                                score_char_constraint_list)
         probe_word = None
         while probe_word == None:
             user_input = input('input next probe word: ')
             if user_input == '':   #exit
                 break
             probe_word = parseUserInputProbeWord(user_input, probe_word_list)
+        round += 1
 
 
 def parseUserInputToCharResponse(user_input):
@@ -488,6 +689,7 @@ def parseUserInputProbeWord(user_input, probe_word_list):
     return user_input
     
 
+
 #This precomputes the score_list the program would return when told the Wordle game's
 #response to the first probe word.
 #Runs through the probe_word_list (which defaults to gl_probe_word_list, but you can pass
@@ -513,7 +715,7 @@ def precomputeResponsesToFirstProbe(probe_word_list = None, first_probe_word = N
         remaining_words, char_constraint_list = pruneWordsPerProbeResponse(gl_answer_word_list, cue_list)
 
         #if not many remaining_words, then use only remaining words as probes
-        if len(remaining_words) < 10:
+        if len(remaining_words) < gl_few_words_len:
             if hard_mode_p:
                 score_list = scoreProbeWords(remaining_words, remaining_words, char_constraint_list)
             else:
@@ -525,8 +727,8 @@ def precomputeResponsesToFirstProbe(probe_word_list = None, first_probe_word = N
                 score_list = scoreProbeWords(remaining_words, probe_word_list, None)
         if score_list == None:
             continue
-        print(str(char_response_combo) + ': ' + str(score_list[0:10]))
-        first_probe_response_dict[tuple(char_response_combo)] = score_list[0:10]
+        print(str(char_response_combo) + ': ' + str(score_list[0:gl_few_words_len]))
+        first_probe_response_dict[tuple(char_response_combo)] = score_list[0:gl_few_words_len]
     return first_probe_response_dict
 
 
@@ -550,26 +752,67 @@ def completePartialCombo(partial_combo):
         ret_list.extend(npc_ret)
     return ret_list
 
-        
-def writeDictToFile(dict, filename, header_str):
+
+
+def writeProbeDictToFile(probe_dict, filename=None, header_str=''):
+    if filename == None:
+        filename = gl_precomputed_probe_dict_filename
+    probe_dict2 = {}   
+    for tup_key in probe_dict:   #need to convert keys from tuple of char to a str
+        str_key = ''.join(tup_key)
+        probe_dict2[str_key] = probe_dict.get(tup_key)
     with open(filename, 'w', encoding='utf8') as file:
         output_str = ''
-        output_str += '#' + header_str
-        output_str += json.dumps(dict, indent=4)
+        output_str += '#' + header_str + '\n'
+        output_str += json.dumps(probe_dict2, indent=4)
         output_str += '\n'
         file.write(output_str)
 
-def readDictFromFile(filename):
+
+
+def readProbeDictFromFile(filename=None):
+    if filename == None:
+        filename = gl_precomputed_probe_dict_filename
     with open(filename, 'r', encoding='utf8') as file:
         input_str = ''
         for line in file:
             if line.find('#') >= 0:
                 continue
-            input_str += line
-    dict = json.loads(input_str)
-    return dict
+            if len(line) > 0:
+                input_str += line
+    global gl_input_str
+    gl_input_str = input_str
+    probe_dict2 = json.loads(input_str)
+    probe_dict = {}
+    for str_key in probe_dict2:
+        tup_keyl = []
+        for i in range(len(str_key)):
+            tup_keyl.append(str_key[i])
+        tup_key = tuple(tup_keyl)
+        probe_dict[tup_key] = probe_dict2.get(str_key)
+    print('read precomputed probe dict of size: ' + str(len(probe_dict)))
+    return probe_dict
 
-        
+
+gl_precomputed_probe_dict_raise_normal_mode_filename = 'precomputed-probe-dict-raise-normal-mode.json'
+gl_precomputed_probe_dict_raise_hard_mode_filename = 'precomputed-probe-dict-raise-hard-mode.json'
+
+gl_precomputed_first_probe_word_dict_raise_normal_mode = None
+gl_precomputed_first_probe_word_dict_raise_hard_mode = None
+
+
+try:
+    gl_precomputed_first_probe_word_dict_raise_normal_mode = \
+            readProbeDictFromFile(gl_precomputed_probe_dict_raise_normal_mode_filename)
+except:
+    print('could not read precomputed probe dict from file ' + gl_precomputed_probe_dict_raise_normal_mode_filename)
+
+try:
+    gl_precomputed_first_probe_word_dict_raise_hard_mode = \
+            readProbeDictFromFile(gl_precomputed_probe_dict_raise_hard_mode_filename)
+except:
+    print('could not read precomputed probe dict from file ' + gl_precomputed_probe_dict_raise_hard_mode_filename)
+    
 
 
 
@@ -621,3 +864,252 @@ gl_answer_word_list = importWordList(gl_answer_word_filename)
 #
 #
 ################################################################################
+
+
+
+
+#This is broken
+#It does not treat yellow and gray of the same character correctly.
+#Example: W H E E L
+#         y y l y l
+def updateCharConstraintList_broken(cue_list, char_constraint_list):
+    new_char_constraint_list = [ set(pos_chrs) for pos_chrs in char_constraint_list ]
+    probe_word = cue_list[0]
+    char_response_list = cue_list[1]
+    for i_pos in range(5):
+        probe_char = probe_word[i_pos]
+        char_response = char_response_list[i_pos]
+        if char_response == 'y':        #gray - remove probe_char entirely from positions
+            for i_pos in range(5):      #       it is not already correct in or showing up as yellow
+                if char_response_list[i_pos] != 'r' and char_response_list[i_pos] != 'l':
+                    new_char_constraint_list[i_pos].discard(probe_char)
+        elif char_response == 'l':      #yellow - remove probe_char only from i_pos chars
+            new_char_constraint_list[i_pos].discard(probe_char)
+            #Add a char tagged as yellow to required set only if it is not accounted for
+            #by a known character that is not labeled 'r' on this cue_response.
+            #Example: wordle archive 159: "raise", "prong", "debts": don't add [2] 'e'
+            #to the required set because it is known to occur at [4] and does not appear
+            #at [4] in 'debts'
+            make_required_p = True
+            #but check if this char is actually accounted for by a known char
+            for i_pos2 in range(5):
+                if i_pos2 == i_pos:
+                    continue
+                ccl_ipos2 = char_constraint_list[i_pos2]
+                #if i_pos2 is known to be probe_char...
+                if len(ccl_ipos2) == 1 and probe_char in ccl_ipos2:
+                    #...and probe_char is not at this other position in the probe word...
+                    if probe_word[i_pos2] != probe_char:
+                        #...then that accounts for the yellow tile
+                        make_required_p = False
+            if make_required_p:
+                new_char_constraint_list[5].add(probe_char)
+        elif char_response == 'r':      #green - only probe_char allowed in i_pos chars
+            new_char_constraint_list[i_pos] = set([probe_char])
+            #Do not add to required set because this char is not looking for a placement.
+            #But the character can be removed from required_set *if* it does not appear
+            #at some other location with a y (seeking placement) response.
+            if probe_char in new_char_constraint_list[5]:
+                ok_to_remove_p = True
+                for i_pos2 in range(5):
+                    if i_pos2 == i_pos:
+                        continue
+                    if char_response_list[i_pos2] != 'l':
+                        continue
+                    if probe_word[i_pos2] == probe_char:
+                        ok_to_remove_p = False
+                if ok_to_remove_p:
+                    new_char_constraint_list[5].discard(probe_char)
+        else:
+            print('unrecognized char_response: ' + str(char_response))
+            return
+    return new_char_constraint_list
+
+
+def updateCharConstraintList_print(cue_list, char_constraint_list):
+    new_char_constraint_list = [ set(pos_chrs) for pos_chrs in char_constraint_list ]
+    probe_word = cue_list[0]
+    char_response_list = cue_list[1]
+    chars_to_consider = {}  #key = char
+                            #value: count of char occurrences
+    for i_pos in range(5):
+        probe_char = probe_word[i_pos]
+        #print('i_pos: ' + str(i_pos) + ' probe_char: ' + str(probe_char))
+        char_response = char_response_list[i_pos]
+        if char_response == 'y':        #gray - remove probe_char entirely from this position
+            new_char_constraint_list[i_pos].discard(probe_char)
+            #if probe_char appears elsewhere as yellow, then we cannot be safe in eliminating
+            #it from other positions
+            char_appears_elsewhere_y_p = False
+            for i_pos2 in range(5):
+                if probe_word[i_pos2] == probe_char:
+                    if char_response_list[i_pos2] == 'l':
+                        char_appears_elsewhere_y_p = True
+                        break
+            #safe to say the char is not some another position either.
+            if not char_appears_elsewhere_y_p:
+                for i_pos2 in range(5):
+                    #don't much with a position if it is known
+                    if len(new_char_constraint_list[i_pos2]) == 1:
+                        continue
+                    new_char_constraint_list[i_pos2].discard(probe_char)    
+                    
+        elif char_response == 'l':      #yellow - remove probe_char only from i_pos chars
+            #print('before discarding: ' + probe_char + ' ' + str(new_char_constraint_list[i_pos]))
+            new_char_constraint_list[i_pos].discard(probe_char)
+            #print('after discarding: ' + probe_char + ' ' + str(new_char_constraint_list[i_pos]))
+            #Add a char tagged as yellow to required set only if it is not accounted for
+            #by a known character that is not labeled 'r' on this cue_response.
+            #Example: wordle archive 159: "raise", "prong", "debts": don't add [2] 'e'
+            #to the required set because it is known to occur at [4] and does not appear
+            #at [4] in 'debts'
+            make_required_p = True
+            #print('yellow l  i_pos: ' + str(i_pos) + ' probe_char: ' + probe_char)
+            #but check if this char is actually accounted for by a known char
+            for i_pos2 in range(5):
+                if i_pos2 == i_pos:
+                    continue
+                ccl_ipos2 = char_constraint_list[i_pos2]
+                #print('ipos2: ' + str(i_pos2) + ' ' + str(ccl_ipos2))
+                #if i_pos2 is known to be probe_char...
+                if len(ccl_ipos2) == 1 and probe_char in ccl_ipos2:
+                    #...and probe_char is not at this other position in the probe word...
+                    if probe_word[i_pos2] != probe_char:
+                        #...then that accounts for the yellow tile
+                        make_required_p = False
+            if make_required_p:
+                new_char_constraint_list[5].add(probe_char)
+            #This could be slightly stronger by counting the number of yellows, and in 
+            #principle determine that a required_char must occur in more than one position.
+            #print('after discarding 2: ' + probe_char + ' ' + str(new_char_constraint_list[i_pos]))
+        elif char_response == 'r':      #green - only probe_char allowed in i_pos chars
+            #print('i_pos: ' + str(i_pos) + ' char_response: ' + char_response)
+            #print( ' before:' + ' ' + str(new_char_constraint_list[i_pos]))
+            new_char_constraint_list[i_pos] = set([probe_char])
+            #print( ' after 1:' + ' ' + str(new_char_constraint_list[i_pos]))            
+            #Do not add to required set because this char is not looking for a placement.
+            #But the character can be removed from required_set *if* it does not appear
+            #at some other location with a y (seeking placement) response.
+            if probe_char in new_char_constraint_list[5]:
+                ok_to_remove_p = True
+                #print('i_pos: ' + str(i_pos) + ' considering to remove probe_char: ' + probe_char + ' from required set')
+                for i_pos2 in range(5):
+                    if i_pos2 == i_pos:
+                        #print('i_pos2 = ' + str(i_pos2))
+                        continue
+                    if char_response_list[i_pos2] != 'l':
+                        #print('char_response_list[i_pos2]' + str(i_pos2) + ' is ' + char_response_list[i_pos2] + ' not l')
+                        continue
+                    if probe_word[i_pos2] == probe_char:
+                        #print('probe_word[' + str(i_pos2) + '] : ' + probe_word[i_pos2] + ' == probe_char: ' + probe_char + ' so setting ok_to_remove_p = False')
+                        ok_to_remove_p = False
+                #print('ok_to_remove_p:' + str(ok_to_remove_p))
+                if ok_to_remove_p:
+                    new_char_constraint_list[5].discard(probe_char)
+            #print( ' after 2:' + ' ' + str(new_char_constraint_list[i_pos]))            
+        else:
+            print('unrecognized char_response: ' + str(char_response))
+            return
+        #print('i_pos: ' + str(i_pos))
+        #printCharConstraintList(new_char_constraint_list)
+    #print('finally')
+    #printCharConstraintList(new_char_constraint_list)
+    return new_char_constraint_list
+
+
+
+
+#This was my original naive version.
+#See markProbeWordAgainstCorrectWord_Naive(probe_word, correct_word).
+#for an explanation
+#char_constraint_list is a list of list of char
+#The first 5 elements are char positions, for chars allowed in that position.
+#The 6th is a list of chars that the word must have somewhere.
+#cue_list a list of two entries:   [probe_word, char_response_list]
+#where char_response_list is a list of 5 strings like   ['y', 'y', 'l', 'r', 'l']
+#This returns a new char_constraint_list that updates the char_constraint_list
+#passed according to the char_responses in cue_list.
+#Does not modify char_constraint_list.
+def updateCharConstraintList_Naive(cue_list, char_constraint_list):
+    new_char_constraint_list = [ set(pos_chrs) for pos_chrs in char_constraint_list ]
+    probe_word = cue_list[0]
+    char_response_list = cue_list[1]
+    for i_pos in range(5):
+        probe_char = probe_word[i_pos]
+        char_response = char_response_list[i_pos]
+        if char_response == 'y':        #gray - remove probe_char entirely
+            for i_pos in range(5):
+                new_char_constraint_list[i_pos].discard(probe_char)
+        elif char_response == 'l':      #yellow - remove probe_char only from i_pos chars
+            new_char_constraint_list[i_pos].discard(probe_char)
+            new_char_constraint_list[5].add(probe_char)         #but add to required set 
+        elif char_response == 'r':      #green - only probe_char allowed in i_pos chars
+            new_char_constraint_list[i_pos] = set([probe_char])
+            #print('r at i_pos: ' + str(i_pos) + ' nccl is: ' + str(new_char_constraint_list[i_pos]))
+            new_char_constraint_list[5].add(probe_char)         #and add to required set
+            #print('2r at i_pos: ' + str(i_pos) + ' nccl is: ' + str(new_char_constraint_list[i_pos]))
+        else:
+            print('unrecognized char_response: ' + str(char_response))
+            return
+        #print('i_pos: ' + str(i_pos))
+        #printCharConstraintList(new_char_constraint_list)
+    #print('finally')
+    #printCharConstraintList(new_char_constraint_list)
+    return new_char_constraint_list
+
+#This was my original naive attempt to emulate what the Wordle game does when you
+#enter a probe word.
+#This version marks a character with a simple rule:
+#mark as yellow if the char occurs in some other column of the word.
+#But that is not quite right.  The actual wordle game marks a probe character
+#as yellow only if it occurs in some other column not already guessed correctly.
+#It doesn't count to mark a probe character as yellow (so it leaves it gray)
+#if that character appears in another column where it belongs, so is marked
+#as green there.
+#Example:
+#  answer_word:    H E R O N
+#  probe_word      E R R O R
+#This version      l l r r l
+#Actual wordle     l y r r y   There is no R (probe char) in the answer word other
+#                              than the one already marked correctly.
+#returns a list length 5 in the range {'r', 'l', 'y'}
+def markProbeWordAgainstCorrectWord_Naive(probe_word, correct_word):
+    char_response_list = []
+    for i in range(5):
+        probe_char_i = probe_word[i]
+        if correct_word[i] == probe_char_i:
+            char_response_list.append('r')
+        elif correct_word.find(probe_char_i) >= 0:
+            char_response_list.append('l')
+        else:
+            char_response_list.append('y')
+    return char_response_list
+
+
+
+#This was my original naive version.
+#See markProbeWordAgainstCorrectWord_Naive(probe_word, correct_word).
+#Applies the character constraints in char_constraint_list to filter out unallowable
+#words from word_list.
+#Returns a list of allowable words.
+def pruneWordsPerCharConstraints_Naive(word_list, char_constraint_list):
+    ok_words = []
+    for word in word_list:
+        ok_p = True
+        for i in range(5):
+            if i >= len(word):
+                print('word is too short: ' + word + ' i: ' + str(i))
+                return
+            char_i = word[i]
+            if char_i not in char_constraint_list[i]:
+                ok_p = False
+                break
+        for required_char in char_constraint_list[5]:
+            if word.find(required_char) < 0:
+                ok_p = False
+                break
+        if ok_p:
+            ok_words.append(word)
+    return ok_words
+
+
