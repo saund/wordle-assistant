@@ -4,6 +4,7 @@
 #Scores are the average and max number of remaining words after playing the initial probe word,
 #collected over all possible 2315 answer words.
 #This takes about 24 hours to compute on a laptop.
+#These are missing aahed and one other.
 ['roate', 60.42462203023758, 195]
 ['raise', 61.00086393088553, 168]
 ['raile', 61.33088552915767, 173]
