@@ -502,9 +502,6 @@ def pruneWordsPerCharConstraints(word_list, char_constraint_list):
         ok_p = True
         #check if the word's chars are allowed by the char_constraint_list
         for i in range(5):
-            if i >= len(word):
-                print('word is too short: ' + word + ' i: ' + str(i))
-                return
             char_i = word[i]
             if char_i not in char_constraint_list[i]:
                 ok_p = False
@@ -1340,6 +1337,13 @@ def findResultSeqForAnswerWord(answer_word, initial_probe_word = 'raise', answer
     return result_seq
 
 
+def sumSearchPathCost(search_path_list):
+    summ = 0
+    for search_path in search_path_list:
+        summ += len(search_path)
+    return summ
+
+
 
 
 
@@ -1660,6 +1664,19 @@ try:
 except:
     gl_depth_limit = 5
 
+    
+#allow to go deeper on initial fast pass with fewer probe words, in order to avoid bailing out
+#and get some kind of bound for the full pass
+try:
+    gl_depth_limit_fast
+except:
+    gl_depth_limit_fast = 100
+
+try:
+    gl_depth_limit_full
+except:
+    gl_depth_limit_full = 5
+    
 
 #gl_wl_162 = ['aback', 'abhor', 'acorn', 'acrid', 'admin', 'adorn', 'affix', 'again', 'aging', 'agony', 'agora', 'among', 'angry', 'annoy', 'aphid', 'aping', 'apron', 'arbor', 'ardor', 'armor', 'aroma', 'array', 'arrow', 'audio', 'augur', 'avian', 'avoid', 'award', 'axiom', 'axion', 'board', 'borax', 'braid', 'brain', 'brand', 'bravo', 'brawn', 'briar', 'broad', 'chaff', 'chain', 'chair', 'champ', 'chard', 'charm', 'china', 'cigar', 'circa', 'coach', 'cobra', 'cocoa', 'comma', 'crack', 'cramp', 'crank', 'crazy', 'croak']
 
@@ -1693,7 +1710,10 @@ try:
 except:
     gl_probe_word_entropies_list = None
 
-gl_probe_word_list_entropy_order = None
+try:
+    gl_probe_word_list_entropy_order
+except:
+    gl_probe_word_list_entropy_order = None
 
 
 gl_big_number = 1000000000
@@ -1731,16 +1751,14 @@ except:
 gl_hit_bottom_cost = gl_big_number + 3
     
 
-#Main attempt to replicate v4
+#Main attempt to replicate v6
 #http://sonorouschocolate.com/notes/index.php?title=The_best_strategies_for_Wordle
-#2022/01/31
-#This is a build on v3 to now at each call first get a bound on score by calling itself
+#2022/02/03
+#This is a build on v5 to now at each call first get a bound on score by calling itself
 #first with a smaller gl_test_probe_word_list, then calling on the full gl_probe_word_list
 #best_cost_bound can be None or a number. As a number, it could be gl_big_number, or else
 #a reasonable cost bound.
-#This function runs and I think it correct.  It is too slow to be useful.  I think that
-#is because the inner loop functions are just too cumbersome in my python implementation.
-#I don't think it is because I am overlooking any major bounds based optimization cutoffs.
+#This version rearranges the estimation of lower bounds to try to more breadth first.
 #
 #Returns two values: best_probe_word_cost, best_probe_policy
 #where probe_policy is a list:  [probe_word, mark_tree]
@@ -1752,9 +1770,15 @@ gl_hit_bottom_cost = gl_big_number + 3
 #
 def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0, probe_L0 = 'salet',
                                              received_probe_word_path = [], prev_level_tcombo = None,
-                                             aw_print_str = ' ', best_cost_bound = None):
-
-    if rec_depth > gl_depth_limit:
+                                             aw_print_str = ' ', received_cost_bound = None,
+                                             bound_intent = None, received_probe_policy = None):
+    #print('countMoves: bound_intent: ' + str(bound_intent))
+    #input('pausing bound intent:')
+    if bound_intent == 'fast':
+        depth_limit = gl_depth_limit_fast
+    else:
+        depth_limit = gl_depth_limit_full
+    if rec_depth > depth_limit:
         return gl_hit_bottom_cost, None
     global gl_last_rec_depth
     global gl_max_rec_depth_seen
@@ -1765,151 +1789,93 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
     global gl_last_remaining_word_dict
     global gl_big_remaining_word_list_list
     global gl_test_probe_word_list
+    global gl_probe_word_list_entropy_order
 
-    if rec_depth == 0:
+    if rec_depth == 0 and bound_intent == None:
         gl_max_rec_depth_seen = 0
         gl_high_score_paths_dict = {}
-        gl_word_set_probe_cost_cache = {}        #key:    tuple: word list
-                                                 #value:  list: [cost, probe_policy]
         gl_big_remaining_word_list_list = []
         gl_last_remaining_word_dict = {}
+        gl_max_rec_depth_seen = max(rec_depth, gl_max_rec_depth_seen)
+        gl_last_remaining_word_dict[rec_depth] = remaining_word_list
+        gl_word_set_probe_cost_cache = {'fast':{},   #Each dict is  key:    tuple: word list
+                                        'full':{}}   #              value:  list: [cost, probe_policy]
     gl_max_rec_depth_seen = max(rec_depth, gl_max_rec_depth_seen)
-    gl_last_remaining_word_dict[rec_depth] = remaining_word_list    
+    gl_last_remaining_word_dict[rec_depth] = remaining_word_list  
 
     if len(remaining_word_list) > 200:
         gl_big_remaining_word_list_list.append(remaining_word_list[:])
 
     #should be sorted already
     tup_rem_wds_list = tuple(remaining_word_list)
-    mark_cost_probe_policy_list = None    
-    mark_cost_probe_policy_list = gl_word_set_probe_cost_cache.get(tup_rem_wds_list)
+    mark_cost_probe_policy_list = None
+    if bound_intent != None:
+        mark_cost_probe_policy_list = gl_word_set_probe_cost_cache[bound_intent].get(tup_rem_wds_list)
     if mark_cost_probe_policy_list != None:
         return mark_cost_probe_policy_list
     rem_word_list_size = len(remaining_word_list)
 
-    #print_p = True
-    print_p = False  
-    print2_p = False
 
-    space = ''
-    for i in range(rec_depth):
-        space += '  '
-    if print_p:            
-        if len(remaining_word_list) < 10:
-            print(space + '-->countMovesTo... L' + str(rec_depth) + ' remaining: ' + str(remaining_word_list) + ' best_cost_bound: ' + str(best_cost_bound))
-        else:
-            print(space + '-->countMovesTo... L' + str(rec_depth) + ' remaining: ' + str(len(remaining_word_list))  + ' best_cost_bound: ' + str(best_cost_bound))
-
-    #Set the main_probe_word_list.
-    #For Level 0, main_probe_word_list is likely to be a single word like ['salet'].
-    #For Level 1, if the Level 0 probe word is 'salet', then use a special list of probe_words.
-    #This will be the entropy-sorted probe_words following application of the probe word 'salet',
-    #indexed by the combo mark response from application of 'salet' at Level 0.
-    #This list will contain all probe words.
-    #Otherwise, do as for Levels >= 2
-    #For Levels >= 2, -For the main_probe_word_list, if gl_probe_word_entropies_list is
-    #                  available, use the probe words from that in order, removing the ones
-    #                  used already in probe_word_path
-    #                 -If gl_probe_word_entropies_list is not available, then use
-    #                  gl_probe_word_list but removing probe_words already used.
-    #                 -The main_probe_word_is copied to to gl_test_probe_word_set.
-    #                  The first gl_top_n_probe_words_to_test (100) of these are copied to
-    #                  gl_test_probe_word_list.
-    #                 -For the initial first pass probe word set, use gl_test_probe_word_list.
-    #                  This word list might be added to along the way if the first 100 are
-    #                  not able to drill down to every answer word in the allotted depth.
-    #                  Because of this, we allow gl_test_probe_word_list to be set up in
-    #                  advance with words we know or expect will need to be added to it.
-    #  The strategy is to call this function twice at each level (so recursively).
-    #  The first call on the a reduced probe_word_list establishes a bound on cost which
-    #is used in the second, recursive call, to make it more efficient.
-    #The second call is on main_probe_word_list.
-    main_probe_word_list = None
-    if rec_depth == 0:
-        if probe_L0 != None:
-            main_probe_word_list = [probe_L0]
-            print('setting Level 0 main_probe_word_list to ' + str(main_probe_word_list))
-
-    elif rec_depth == 1:
-        #try to use entropy-ordered probe word list indexed off prev_level_tcombo
-        if len(received_probe_word_path) > 0 and \
-           received_probe_word_path[0] == 'salet' and \
-           gl_level_1_probe_word_entropies_dict_salet == None:
-            print('\n\n!!! Probelem.  At Level 1 attempting to use entropy based gl_level_1_probe_word_entropies_dict_salet but this is absent')
-            input('problem here 232:')
-            return
-            [num_answer_words, pw_entropies] = \
-                    gl_level_1_probe_word_entropies_dict_salet.get(prev_level_tcombo)
-            if num_answer_words != rem_word_list_size:
-                print('problem: expected rem_word_list_size: ' + str(rem_word_list_size) + ' to match num_answer_words: ' + str(num_answer_words) + ' from gl_level_1_probe_word_entropies_dict_salet with prev_level_tcombo: ' + str(prev_level_tcombo))
-                input('problem halt here')
-                return
-            main_probe_word_list = [ item[0] for item in pw_entropies ]
-            print('ordering Level 1 post-salet probe_word_list to ' + str(probe_word_list[0:20]) + '...')
-
-    #for the second pass through all probe words 
-    if main_probe_word_list == None:
-        global gl_probe_word_list_entropy_order
+    if gl_test_probe_word_list == None:
         if gl_probe_word_list_entropy_order == None:
             if gl_probe_word_entropies_list == None:
                 print('\nProblem: cannot produce main_probe_word_list because gl_probe_word_entropies_list is None')
                 input('problem here 2882:')
                 return
             gl_probe_word_list_entropy_order = [ pwe[0] for pwe in gl_probe_word_entropies_list ]
-        
-        main_probe_word_list = gl_probe_word_list_entropy_order
+        gl_test_probe_word_list = gl_probe_word_list_entropy_order[0:gl_top_n_probe_words_to_test]
+    
+    #print_p = True
+    print_p = False  
 
-    #for the first pass through, choose top N probe words
-    if rec_depth <= 1:
-        test_probe_word_list = main_probe_word_list[0: gl_top_n_probe_words_to_test]
-    #for levels 2+, use gl_test_probe_word list.  This starts with the top N from
-    #main_probe_word_list, but then can grow if more probe words are needed.
-    #This can happen if the limited set of probe words is unable to find every answer
-    #word under the depth limit.
-    else:
-        if gl_test_probe_word_list == None:
-            gl_test_probe_word_list = main_probe_word_list[0: gl_top_n_probe_words_to_test]
-        test_probe_word_list = gl_test_probe_word_list
-        
-        
-    #If first time calling on this remaining_word_list, call self recursively
-    #to get a reasonable cost bound.
-    if best_cost_bound == None:
-        best_cost_bound, probe_policy = \
-                countMovesToDistinguishAllRemainingWords(remaining_word_list,
-                                                         rec_depth,
-                                                         probe_L0,
-                                                         received_probe_word_path,
-                                                         prev_level_tcombo,
-                                                         aw_print_str,
-                                                         gl_big_number)
-        #Second pass.  best_cost_bound has been set by the recusive call at this level,
-        #so proceed through the main function below.
-        best_probe_word_cost = gl_big_number
-        probe_word_list = main_probe_word_list
-        if rec_depth == 0 and len(main_probe_word_list) == 1:
-            print('')
-            return best_cost_bound, probe_policy
-        a_or_b = 'b'
-        if print_p:
-            print('\n' + space + 'L' + str(rec_depth) + ' returned from countMoves with best_cost_bound: ' + str(best_cost_bound) + '',end='')
-            input('pause return 1:')
-        if rec_depth <= 2:
-            print('\n' + space + 'L' + str(rec_depth) + 'b proceeding to consider ' + str(len(probe_word_list)) + ' probe words, ' + str(len(remaining_word_list)) + ' rem words with best_cost_bound: ' + str(best_cost_bound) + ' ', end='')
+    space = ''
+    for i in range(rec_depth):
+        space += '  '
+    if print_p:            
+        if len(remaining_word_list) < 10:
+            print(space + '-->countMovesTo... L' + str(rec_depth) + ' remaining: ' + str(remaining_word_list) + ' received_cost_bound: ' + str(received_cost_bound))
+        else:
+            print(space + '-->countMovesTo... L' + str(rec_depth) + ' remaining: ' + str(len(remaining_word_list))  + ' received_cost_bound: ' + str(received_cost_bound))
 
-    #First pass
-    elif best_cost_bound == gl_big_number:
-        best_probe_word_cost = gl_big_number    
-        probe_word_list = test_probe_word_list
+    if bound_intent == None:
+        global gl_fast_probe_policy
+        gl_fast_probe_policy = None
+        print('pass 1 fast')
+        fast_cost_bound, fast_probe_policy = \
+                    countMovesToDistinguishAllRemainingWords(remaining_word_list,
+                                                             0, probe_L0, [], None, ' ',
+                                                             gl_big_number, 'fast')
+        gl_fast_probe_policy = fast_probe_policy
+        
+        print('\npass 1 fast complete')
+        print('fast_cost_bound: ' + str(fast_cost_bound))
+        #input('pausing:')
+        best_cost, probe_policy = \
+                    countMovesToDistinguishAllRemainingWords(remaining_word_list,
+                                                             0, probe_L0, [], None, ' ',
+                                                             fast_cost_bound, 'full',
+                                                             fast_probe_policy)
+        print('Finished. \nfast_cost_bound was: ' + str(fast_cost_bound))
+        print('final best_cost: ' + str(best_cost))
+      
+        return best_cost, probe_policy
+
+    elif bound_intent == 'fast':
+        if type(probe_L0) is str:
+            probe_word_list = [probe_L0]
+        else:
+            probe_word_list = gl_test_probe_word_list
         a_or_b = 'a'
-        if rec_depth <= 2:
-            print('\n' + space + 'L' + str(rec_depth) + 'a first pass to consider ' + str(len(probe_word_list)) + ' probe_words, ' + str(len(remaining_word_list)) + ' rem words with best_cost_bound: ' + str(best_cost_bound) + ' ', end='')
-    else:
-        print('problem, should not be here A88s best_cost_bound: ' + str(best_cost_bound))
-
-
         
-    #Done with any needed setup, now start the work.
+    elif  bound_intent == 'full':
+        if type(probe_L0) is str:
+            probe_word_list = [probe_L0]
+        else:
+            probe_word_list = gl_probe_word_list_entropy_order
+        best_probe_policy = received_probe_policy
+        a_or_b = 'b'                   
+
+    best_probe_word_cost = received_cost_bound
     num_probe_words_considered = 0
     best_probe_word = None
     best_probe_word_branches = None  # list of list [tuple combo_mark, list remaining_words_in_branch]
@@ -1930,15 +1896,17 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
                                    #value: probe_policy: [next_probe_word, next_mark_tree]
                                         
         if rec_depth == 0 or \
-           (rec_depth <= 1 and num_probe_words_considered < 200):
-#           rec_depth <= 2:                       
+           (rec_depth <= 1 and num_probe_words_considered < 200):      
+#           (rec_depth <= 2 and num_probe_words_considered < 20):    
+#           rec_depth <= 2:                                                         
+#           rec_depth <= 1:           
 #           rec_depth <= 3:                       
 #           rec_depth <= 5:
 #           rec_depth <= 3 and num_probe_words_considered %1000 == 0:
             rem_word_str = ' rem_words: ' + str(len(remaining_word_list)) + ' : ' + str(remaining_word_list[0:7])
             if len(remaining_word_list) > 7:
                 rem_word_str += '...'
-            print('\n' + space + '->' + str(rec_depth) + aw_print_str + ' pwp: ' + str(probe_word_path) + ' rem_words: ' + rem_word_str, end='')
+            print('\n' + space + '->' + str(rec_depth) + a_or_b + aw_print_str + ' pwp: ' + str(probe_word_path) + ' rem_words: ' + rem_word_str, end='')
         elif rec_depth != gl_last_rec_depth:
             print(str(rec_depth) + a_or_b, end='', flush=True)
         #elif num_probe_words_considered %1000 == 0:
@@ -1953,16 +1921,18 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
                                      #value: list: [remaining_word_list from tcombo,
                                      #              list of answer_word that all deliver this
                                      #              remaining_words_list]
-        probe_word_cost = 1          #cost to play the probe word
+        probe_word_cost = 0          #cost to play the probe word incremented with every answer_word
         num_probe_words_considered += 1
         for answer_word in remaining_word_list:
+
+            probe_word_cost += 1          #cost to play the probe word, min 1 per answer word
             if answer_word == probe_word:
                 if print_p:
                     print(space + 'testing answer_word: /' + answer_word + '/, matches probe word so 0 cost')
                 #this answer_word matches the probe word so requires no other probes,
                 #move on to the next answer_word
                 mark_cost = 0
-                probe_word_mark_tree[tcombo] = answer_word
+                probe_word_mark_tree[gl_correct_tcombo] = answer_word                
                 continue
             
             i_answer_word = gl_answer_word_index_dict.get(answer_word)
@@ -1986,8 +1956,23 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
 
         #^for answer_word in remaining_word_list:
 
+        #now probe_word_cost accounts for all of the remaining_word_list that either
+        #matches the probe_word or else gets delivered as unique after the probe_word
+        #has been played.
+
         #handle the answer_words that require another probe_word split on a per combo basis
         tcombo_count = 0
+
+        lower_bound_from_tcombos = 0
+        for tcombo in remaining_words_1_dict.keys():
+            #this lower bound is based on a best case of one more probe word play that hits
+            #each remaining answer word with one more probe_word
+            lower_bound_from_tcombos += len(remaining_words_1_dict.get(tcombo))
+
+        #Boost the probe_word_cost to the minimum it could possibly be.
+        #Then updated it as the real cost of each words_remaining_1 is learned
+        probe_word_cost = probe_word_cost + lower_bound_from_tcombos
+        #as we work our way through the tcombos, 
         for tcombo in remaining_words_1_dict.keys():
             tcombo_count += 1
             answer_words_for_tcombo = remaining_words_1_dict.get(tcombo)
@@ -1996,7 +1981,7 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
                 print('\n' + space + 'answer_words for tcombo: ' + str(tcombo) + ' : ' + str(answer_words_for_tcombo))
             cue_list = [probe_word, tcombo]
             words_remaining_1, ccl1 = pruneWordsPerProbeResponse(remaining_word_list, cue_list)
-            if print_p or print2_p:
+            if print_p:
                 wrl_str = '(' + str(len(words_remaining_1)) + ')'
                 if len(words_remaining_1) <= 8:
                     wrl_str += str(words_remaining_1)
@@ -2005,10 +1990,12 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
                 
             if len(words_remaining_1) == 1:
                 if words_remaining_1[0] == answer_words_for_tcombo[0]:
-                    if print_p or print2_p:
+                    if print_p:
                         print(space + 'words_remaining_1: ' + str(words_remaining_1) + ' matches answer_word, mark_dict is 1')
                     mark_cost = 1
-                    probe_word_cost += mark_cost * n_answer_words_for_tcombo
+                    #probe_word_cost += mark_cost * n_answer_words_for_tcombo
+                    #probe_word_cost += mark_cost * n_answer_words_for_tcombo
+                    #this will be a wash in terms of probe_word_cost
                     probe_word_mark_tree[tcombo] = words_remaining_1
                     #no need to look at any other words, this probe word is already no better than we have
                     if probe_word_cost >= best_probe_word_cost:  
@@ -2030,29 +2017,68 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
                 
             if len(words_remaining_1) == 2:
                 mark_cost = 3  # [w1, w2] costs 3:  w1: probe(w1) ; w2: probe(w1) + probe(w2)
-                probe_word_cost += mark_cost
+                probe_word_cost += 1  #mark cost minus 2 already talled as min for these words remaining
+                #This is a wash as for probe word cost bound
                 probe_word_mark_tree[tcombo] = words_remaining_1
                 #no need to look at any other words, this probe word is already no better than we have
                 if probe_word_cost >= best_probe_word_cost:
                     break   #break to next probe_word
                 continue    #continue with next answer_word
 
-            #will need to recurse. The recursion gives the mark_cost for all of the
+            #Will need to recurse. The recursion gives the mark_cost for all of the
             #answer words together
-            mark_cost_probe_policy_list = None            
-            mark_cost_probe_policy_list = gl_word_set_probe_cost_cache.get(tup_wds_rem_1)
+            #Is the answer in the cache?
+            mark_cost_probe_policy_list = gl_word_set_probe_cost_cache[bound_intent].get(tup_wds_rem_1)
             if mark_cost_probe_policy_list != None:
                 mark_cost = mark_cost_probe_policy_list[0]
                 next_level_probe_policy = mark_cost_probe_policy_list[1]
-                probe_word_cost += mark_cost
+                probe_word_cost += mark_cost - n_answer_words_for_tcombo
                 probe_word_mark_tree[tcombo] = next_level_probe_policy
                 if print_p:
                     print('\n' + space + 'L' + str(rec_depth) + ' for tup_wds_rem_1: ' + str(tup_wds_rem_1) + ' got from dict L' + str(rec_depth) + ' with mark_cost: ' + str(mark_cost) + ' probe_word_cost in progress is now ' + str(probe_word_cost) + ' best probe_word_cost: ' + str(best_probe_word_cost))
                     print('gl_word_set_probe_cost_cache: ' + str(gl_word_set_probe_cost_cache))
-                
+
+            #Have to actually recurse to get the answer.
             else:
-                next_aw_print_str = ' (pw-L' + str(rec_depth) + '(' + str(tcombo_count) + ' of ' + str(len(remaining_words_1_dict)) + ') : ' + probe_word + ' ' + str(tcombo) + ' ' + str(probe_word_cost) + '/' + str(best_probe_word_cost) + ') '
-                
+                #dependent on having a fast bound first, compute it if necessary
+                if bound_intent == 'full':
+                    mark_cost_probe_policy_list_fast = \
+                            gl_word_set_probe_cost_cache['fast'].get(tup_wds_rem_1)
+                    if mark_cost_probe_policy_list_fast != None:
+                        fast_bound = mark_cost_probe_policy_list_fast[0]
+                        next_level_probe_policy = mark_cost_probe_policy_list_fast[1]
+                        bound_to_use = fast_bound
+                        #print('\n' + space + 'getting to use fast bound: ' + str(fast_bound) + ' ', end='')
+                        #input('getting to use fast bound:')
+                    else:
+                        #print('why is fast_bound none? tup_wds_rem_1: ' + str(tup_wds_rem_1))
+                        #input('why is fast_bound none?')
+                        #print('\n' + space + 'pwL' + str(rec_depth) + ' backfilling fast bound ', end='')
+                        next_aw_print_str = ' (pw-L ' + str(rec_depth) + a_or_b + '(' + str(tcombo_count) + ' of ' + str(len(remaining_words_1_dict)) + ') : ' + probe_word + ' ' + str(tcombo) + ' ' + str(probe_word_cost) + '/' + str(gl_big_number) + ' (backfilling fast bound)) '
+                        fast_bound, next_level_probe_policy = \
+                                countMovesToDistinguishAllRemainingWords(words_remaining_1,
+                                                                         rec_depth+1,
+                                                                         None,
+                                                                         probe_word_path,
+                                                                         tcombo,
+                                                                         next_aw_print_str,
+                                                                         gl_big_number,
+                                                                         'fast')
+                        #write it now because it could be used again within this call to
+                        #countMoves...()
+                        gl_word_set_probe_cost_cache['fast'][tup_wds_rem_1] = \
+                                                    [fast_bound, next_level_probe_policy]
+                        print(',', end='', flush=True)
+                        #print('\n' + space + 'okay we computed it:  fast_bound is: ' + str(fast_bound) + ' ', end='')
+                        #input('okay we computed fast_bound:')
+                        bound_to_use = fast_bound
+
+                #bound_intent is 'fast'
+                else:
+                    bound_to_use = gl_big_number
+
+                #this recursion is for both fast and full modes
+                next_aw_print_str = ' (pw-L' + str(rec_depth) + '(' + str(tcombo_count) + ' of ' + str(len(remaining_words_1_dict)) + ') : ' + probe_word + ' ' + str(tcombo) + ' ' + str(probe_word_cost) + '/' + str(best_probe_word_cost) + ' B:' + str(bound_to_use) + ') '
                 mark_cost, next_level_probe_policy = \
                         countMovesToDistinguishAllRemainingWords(words_remaining_1,
                                                                  rec_depth+1,
@@ -2060,12 +2086,21 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
                                                                  probe_word_path,
                                                                  tcombo,
                                                                  next_aw_print_str,
-                                                                 None)
-                probe_word_cost += mark_cost
+                                                                 bound_to_use,
+                                                                 bound_intent)
+                #write it now because it could be used again within this call to
+                #countMoves...()
+                gl_word_set_probe_cost_cache[bound_intent][tup_wds_rem_1] = \
+                                                        [mark_cost, next_level_probe_policy]
+
+                probe_word_cost += mark_cost - n_answer_words_for_tcombo                
                 probe_word_mark_tree[tcombo] = next_level_probe_policy
+
                 if print_p:
                     print('\n' + space + 'got back to L' + str(rec_depth) + ' testing probe_word: ' + probe_word + ' on answer_word: /' + answer_word + '/ with mark_cost: ' + str(mark_cost) + ' probe_word_cost in progress is now ' + str(probe_word_cost) + ' best probe_word_cost: ' + str(best_probe_word_cost))
+
                 if probe_word_cost >= best_probe_word_cost:
+                    print(';', end='', flush=True)
                     break
         #^for tcombo in remaining_words_1_dict.keys():                
 
@@ -2081,7 +2116,8 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
 
         #Another way to exit early.
         if best_probe_word_cost == best_possible_count:
-            gl_word_set_probe_cost_cache[tup_rem_wds_list] = [best_probe_word_cost, best_probe_policy]
+            gl_word_set_probe_cost_cache[bound_intent][tup_rem_wds_list] = \
+                                        [best_probe_word_cost, best_probe_policy]
             if print_p or rec_depth <= 2:
                 wl_print = ''
                 if len(remaining_word_list) < 6:
@@ -2112,14 +2148,14 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
 
     possiblyAddToHighScorePathsDict(best_probe_word_cost, best_probe_word, probe_word_path, remaining_word_list)
 
-    #if print_p:
     if print_p or rec_depth <= 2:        
         wl_print = ''
         if len(remaining_word_list) < 6:
             wl_print = ': ' + str(remaining_word_list)
         print('\n' + space + ' L' + str(rec_depth) + a_or_b + ' returning for remaining_word_list size ' + str(len(remaining_word_list)) + wl_print + ' returning best_probe_word: ' + str(best_probe_word) + ' best_probe_word_cost: ' + str(best_probe_word_cost) + '  num_probe_words_considered: ' + str(num_probe_words_considered) + ' ', end='')
-    #printProbePolicy(best_probe_policy)
-    gl_word_set_probe_cost_cache[tup_rem_wds_list] = [best_probe_word_cost, best_probe_policy]
+
+    gl_word_set_probe_cost_cache[bound_intent][tup_rem_wds_list] = \
+                                    [best_probe_word_cost, best_probe_policy]
     return best_probe_word_cost, best_probe_policy
 
 
@@ -2132,27 +2168,52 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
 #                        -a list of remaining_answer_words delivered by the probe_word_path to this level
 #                        -a probe_policy (list: [next probe_word and mark_tree])
 def printProbePolicy(probe_policy, indent = 0):
+    #print('pPP: ' + str(probe_policy))
     space = ' ' * indent
     probe_word = probe_policy[0]
     mark_dict = probe_policy[1]
     tcombos = list(mark_dict.keys())
     tcombo0 = tcombos[0]
     next_level_policy = mark_dict.get(tcombo0)
-    if len(next_level_policy) == 1:
+    if type(next_level_policy) is str:
+        print(space + probe_word + '  ' + str(tcombo0) + ': ' + next_level_policy)
+    elif len(next_level_policy) == 1:
         print(space + probe_word + '  ' + str(tcombo0) + ': ' + str(next_level_policy))
     elif type(next_level_policy[1]) is not dict:
-        print(space + probe_word + '  ' + str(tcombo0) + ': ' + str(next_level_policy))
+        if len(next_level_policy) != 2:
+            print('expected two answer words here: ' + str(next_level_policy))
+            return
+        #construct a two_word next_level_policy,
+        #the combo leading to the altnerative is not known
+        #print('should be printing prate here: tcombo0: ' + str(tcombo0))
+        print(space + probe_word + '  ' + str(tcombo0) + ': ')
+        two_word_nlp = [next_level_policy[0], {('r', 'r', 'r', 'r', 'r'): next_level_policy[0],
+                                               ('x', 'x', 'x', 'x', 'x'):
+                                               [next_level_policy[1]]}]
+        printProbePolicy(two_word_nlp, indent + 20)
     else:
         print(space + probe_word + '  ' + str(tcombo0) + ': ')
         printProbePolicy(next_level_policy, indent + 20)
     if len(tcombos) < 2:
+        print('tcombos < 2 so returning')
         return
     for tcombo in tcombos[1:]:
-        next_level_policy = mark_dict.get(tcombo)
-        if len(next_level_policy) == 1:       #a word
+        next_level_policy = mark_dict.get(tcombo)  
+        if type(next_level_policy) is str:      #probe word is answer word
+            print(space + probe_word + '  ' + str(tcombo0) + ': ' + next_level_policy)           
+        elif len(next_level_policy) == 1:       #a single word candidate after probe
             print(space + '     ' + '  ' + str(tcombo) + ': ' + str(next_level_policy))
-        elif type(next_level_policy[1]) is not dict:    #a word
-            print(space + '     ' + '  ' + str(tcombo) + ': ' + str(next_level_policy))
+        elif type(next_level_policy[1]) is not dict:
+            if len(next_level_policy) != 2:
+                print('expected two answer words here: ' + str(next_level_policy))
+                return
+            #construct a two_word next_level_policy,
+            #the combo leading to the altnerative is not known
+            print(space + '     ' + '  ' + str(tcombo) + ': ')
+            two_word_nlp = [next_level_policy[0], {('r', 'r', 'r', 'r', 'r'): next_level_policy[0],
+                                                   ('x', 'x', 'x', 'x', 'x'):
+                                                   [next_level_policy[1]]}]
+            printProbePolicy(two_word_nlp, indent + 20)
         else:
             print(space + '     ' + '  ' + str(tcombo) + ': ')
             printProbePolicy(next_level_policy, indent + 20)
@@ -2188,13 +2249,17 @@ def buildSearchPathForAllWordsInProbePolicy(probe_policy, path_to_here = None):
             answer_word_path.append(answer_word)
             path_list.append(answer_word_path)
         elif type(items[1]) is not dict:
-            answer_word = items[0]
+            if len(items) != 2:
+                print('expected two word items here')
+                return
+            answer_word = items[0]              #answer_word is probe_word
             answer_word_path = path_to_here[:]
             answer_word_path.append(answer_word)
             path_list.append(answer_word_path)
             answer_word = items[1]
-            answer_word_path = path_to_here[:]
-            answer_word_path.append(answer_word)
+            answer_word_path = path_to_here[:]  #answer_word is alt to probe_word
+            answer_word_path.append(items[0])  
+            answer_word_path.append(items[1])
             path_list.append(answer_word_path)
         else:
             descendent_policy = items
@@ -2203,8 +2268,28 @@ def buildSearchPathForAllWordsInProbePolicy(probe_policy, path_to_here = None):
             path_list.extend(descendent_paths)
     return path_list
 
-    
 
+
+
+def writeProbePolicyToFile(probe_policy, filename):
+    pp_converted = convertProbePolicyToJsonWritable(probe_policy)
+    with open(filename, 'w', encoding='utf8') as file:
+        pp_str = json.dumps(pp_converted, indent=4)
+        file.write(pp_str + '\n')
+
+def convertProbePolicyToJsonWritable(probe_policy):
+    if len(probe_policy) < 2:
+        return probe_policy
+    tdict = probe_policy[1]
+    if type(tdict) is not dict:
+        return probe_policy
+    new_tdict = {}
+    for tcombo in tdict.keys():
+        str_combo = ''.join(tcombo)
+        next_tdict = tdict.get(tcombo)
+        new_tdict[str_combo] = convertProbePolicyToJsonWritable(next_tdict)
+    return [probe_policy[0], new_tdict]
+    
             
 
 
@@ -2364,6 +2449,10 @@ def writeDictToFile(a_dict, filename):
         output_str = json.dumps(a_dict2, indent=4)
         output_str += '\n'
         file.write(output_str)
+
+
+
+        
 
 
 def readLevel1ProbeWordEntropiesDictFromFile(filename = None):
@@ -2629,7 +2718,7 @@ def makeSimpleChainPolicy(answer_word_list):
 #
 #Archives
 #
-
+#...are generally about confessing lamosity in development efforts
 
 
 #This is broken
@@ -3643,4 +3732,804 @@ def countMovesToDistinguishAllRemainingWords_save(remaining_word_list, rec_depth
             wl_print = ': ' + str(remaining_word_list)
     #print(space + 'for remaining_word_list size ' + str(len(remaining_word_list)) + wl_print + ' returning best_probe_word: ' + str(best_probe_word) + ' best_probe_word_cost: ' + str(best_probe_word_cost) + '  probe_words_considered: ' + str(probe_words_considered))
     return best_probe_word, best_probe_word_cost
+
+
+
+
+
+
+#Main attempt to replicate v4
+#http://sonorouschocolate.com/notes/index.php?title=The_best_strategies_for_Wordle
+#2022/02/03
+#This is a build on v3 to now at each call first get a bound on score by calling itself
+#first with a smaller gl_test_probe_word_list, then calling on the full gl_probe_word_list
+#best_cost_bound can be None or a number. As a number, it could be gl_big_number, or else
+#a reasonable cost bound.
+#
+#This function runs and I think it correct.  It is too slow to be useful.  I think that
+#is because the inner loop functions are just too cumbersome in my python implementation.
+#Also, maybe more importantly, I still could be better with the bounds checking.
+#
+#Returns two values: best_probe_word_cost, best_probe_policy
+#where probe_policy is a list:  [probe_word, mark_tree]
+#where
+#mark_tree is a dict:  key: tuple combo_mark
+#                      value: either
+#                        -a list of remaining_answer_words delivered by the probe_word_path to this level
+#                        -a probe_policy (list: [next probe_word, mark_tree])
+#
+def countMovesToDistinguishAllRemainingWords_v4(remaining_word_list, rec_depth = 0, probe_L0 = 'salet',
+                                             received_probe_word_path = [], prev_level_tcombo = None,
+                                             aw_print_str = ' ', best_cost_bound = None):
+
+    if rec_depth > gl_depth_limit:
+        return gl_hit_bottom_cost, None
+    global gl_last_rec_depth
+    global gl_max_rec_depth_seen
+    global gl_word_set_probe_cost_cache
+    global gl_high_score_paths_dict
+    global gl_last_remaining_word_list
+    gl_last_remaining_word_list = remaining_word_list
+    global gl_last_remaining_word_dict
+    global gl_big_remaining_word_list_list
+    global gl_test_probe_word_list
+
+    if rec_depth == 0:
+        gl_max_rec_depth_seen = 0
+        gl_high_score_paths_dict = {}
+        gl_word_set_probe_cost_cache = {}        #key:    tuple: word list
+                                                 #value:  list: [cost, probe_policy]
+        gl_big_remaining_word_list_list = []
+        gl_last_remaining_word_dict = {}
+    gl_max_rec_depth_seen = max(rec_depth, gl_max_rec_depth_seen)
+    gl_last_remaining_word_dict[rec_depth] = remaining_word_list    
+
+    if len(remaining_word_list) > 200:
+        gl_big_remaining_word_list_list.append(remaining_word_list[:])
+
+    #should be sorted already
+    tup_rem_wds_list = tuple(remaining_word_list)
+    mark_cost_probe_policy_list = None    
+    mark_cost_probe_policy_list = gl_word_set_probe_cost_cache.get(tup_rem_wds_list)
+    if mark_cost_probe_policy_list != None:
+        return mark_cost_probe_policy_list
+    rem_word_list_size = len(remaining_word_list)
+
+    #print_p = True
+    print_p = False  
+    print2_p = False
+
+    space = ''
+    for i in range(rec_depth):
+        space += '  '
+    if print_p:            
+        if len(remaining_word_list) < 10:
+            print(space + '-->countMovesTo... L' + str(rec_depth) + ' remaining: ' + str(remaining_word_list) + ' best_cost_bound: ' + str(best_cost_bound))
+        else:
+            print(space + '-->countMovesTo... L' + str(rec_depth) + ' remaining: ' + str(len(remaining_word_list))  + ' best_cost_bound: ' + str(best_cost_bound))
+
+    #Set the main_probe_word_list.
+    #For Level 0, main_probe_word_list is likely to be a single word like ['salet'].
+    #For Level 1, if the Level 0 probe word is 'salet', then use a special list of probe_words.
+    #This will be the entropy-sorted probe_words following application of the probe word 'salet',
+    #indexed by the combo mark response from application of 'salet' at Level 0.
+    #This list will contain all probe words.
+    #Otherwise, do as for Levels >= 2
+    #For Levels >= 2, -For the main_probe_word_list, if gl_probe_word_entropies_list is
+    #                  available, use the probe words from that in order, removing the ones
+    #                  used already in probe_word_path
+    #                 -If gl_probe_word_entropies_list is not available, then use
+    #                  gl_probe_word_list but removing probe_words already used.
+    #                 -The main_probe_word_is copied to to gl_test_probe_word_set.
+    #                  The first gl_top_n_probe_words_to_test (100) of these are copied to
+    #                  gl_test_probe_word_list.
+    #                 -For the initial first pass probe word set, use gl_test_probe_word_list.
+    #                  This word list might be added to along the way if the first 100 are
+    #                  not able to drill down to every answer word in the allotted depth.
+    #                  Because of this, we allow gl_test_probe_word_list to be set up in
+    #                  advance with words we know or expect will need to be added to it.
+    #  The strategy is to call this function twice at each level (so recursively).
+    #  The first call on the a reduced probe_word_list establishes a bound on cost which
+    #is used in the second, recursive call, to make it more efficient.
+    #The second call is on main_probe_word_list.
+    main_probe_word_list = None
+    if rec_depth == 0:
+        if probe_L0 != None:
+            main_probe_word_list = [probe_L0]
+            print('setting Level 0 main_probe_word_list to ' + str(main_probe_word_list))
+
+    elif rec_depth == 1:
+        #try to use entropy-ordered probe word list indexed off prev_level_tcombo
+        if len(received_probe_word_path) > 0 and \
+           received_probe_word_path[0] == 'salet' and \
+           gl_level_1_probe_word_entropies_dict_salet == None:
+            print('\n\n!!! Probelem.  At Level 1 attempting to use entropy based gl_level_1_probe_word_entropies_dict_salet but this is absent')
+            input('problem here 232:')
+            return
+            [num_answer_words, pw_entropies] = \
+                    gl_level_1_probe_word_entropies_dict_salet.get(prev_level_tcombo)
+            if num_answer_words != rem_word_list_size:
+                print('problem: expected rem_word_list_size: ' + str(rem_word_list_size) + ' to match num_answer_words: ' + str(num_answer_words) + ' from gl_level_1_probe_word_entropies_dict_salet with prev_level_tcombo: ' + str(prev_level_tcombo))
+                input('problem halt here')
+                return
+            main_probe_word_list = [ item[0] for item in pw_entropies ]
+            print('ordering Level 1 post-salet probe_word_list to ' + str(probe_word_list[0:20]) + '...')
+
+    #for the second pass through all probe words 
+    if main_probe_word_list == None:
+        global gl_probe_word_list_entropy_order
+        if gl_probe_word_list_entropy_order == None:
+            if gl_probe_word_entropies_list == None:
+                print('\nProblem: cannot produce main_probe_word_list because gl_probe_word_entropies_list is None')
+                input('problem here 2882:')
+                return
+            gl_probe_word_list_entropy_order = [ pwe[0] for pwe in gl_probe_word_entropies_list ]
+        
+        main_probe_word_list = gl_probe_word_list_entropy_order
+
+    #for the first pass through, choose top N probe words
+    if rec_depth <= 1:
+        test_probe_word_list = main_probe_word_list[0: gl_top_n_probe_words_to_test]
+    #for levels 2+, use gl_test_probe_word list.  This starts with the top N from
+    #main_probe_word_list, but then can grow if more probe words are needed.
+    #This can happen if the limited set of probe words is unable to find every answer
+    #word under the depth limit.
+    else:
+        if gl_test_probe_word_list == None:
+            gl_test_probe_word_list = main_probe_word_list[0: gl_top_n_probe_words_to_test]
+        test_probe_word_list = gl_test_probe_word_list
+        
+        
+    #If first time calling on this remaining_word_list, call self recursively
+    #to get a reasonable cost bound.
+    if best_cost_bound == None:
+        best_cost_bound, probe_policy = \
+                countMovesToDistinguishAllRemainingWords_v4(remaining_word_list,
+                                                            rec_depth,
+                                                            probe_L0,
+                                                            received_probe_word_path,
+                                                            prev_level_tcombo,
+                                                            aw_print_str,
+                                                            gl_big_number)
+        #Second pass.  best_cost_bound has been set by the recusive call at this level,
+        #so proceed through the main function below.
+        best_probe_word_cost = gl_big_number
+        probe_word_list = main_probe_word_list
+        if rec_depth == 0 and len(main_probe_word_list) == 1:
+            print('')
+            return best_cost_bound, probe_policy
+        a_or_b = 'b'
+        if print_p:
+            print('\n' + space + 'L' + str(rec_depth) + ' returned from countMoves with best_cost_bound: ' + str(best_cost_bound) + '',end='')
+            input('pause return 1:')
+        if rec_depth <= 2:
+            print('\n' + space + 'L' + str(rec_depth) + 'b proceeding to consider ' + str(len(probe_word_list)) + ' probe words, ' + str(len(remaining_word_list)) + ' rem words with best_cost_bound: ' + str(best_cost_bound) + ' ', end='')
+
+    #First pass
+    elif best_cost_bound == gl_big_number:
+        best_probe_word_cost = gl_big_number    
+        probe_word_list = test_probe_word_list
+        a_or_b = 'a'
+        if rec_depth <= 2:
+            print('\n' + space + 'L' + str(rec_depth) + 'a first pass to consider ' + str(len(probe_word_list)) + ' probe_words, ' + str(len(remaining_word_list)) + ' rem words with best_cost_bound: ' + str(best_cost_bound) + ' ', end='')
+    else:
+        print('problem, should not be here A88s best_cost_bound: ' + str(best_cost_bound))
+
+
+        
+    #Done with any needed setup, now start the work.
+    num_probe_words_considered = 0
+    best_probe_word = None
+    best_probe_word_branches = None  # list of list [tuple combo_mark, list remaining_words_in_branch]
+                                     # if a leaf, then the element is a string, the answer_word
+
+    #The best possible count for any probe_word is one that shatters the remaining_word_list
+    #into individual words which then require only one more guess each.
+    best_possible_count = len(remaining_word_list) + 1
+    
+    for probe_word in probe_word_list:
+        i_probe_word = gl_probe_word_index_dict.get(probe_word)
+        probe_word = gl_probe_word_list[i_probe_word]
+        if probe_word in received_probe_word_path:
+            continue
+        probe_word_path = received_probe_word_path[:]
+        probe_word_path.append(probe_word)
+        probe_word_mark_tree = {}  #key: combo_mark
+                                   #value: probe_policy: [next_probe_word, next_mark_tree]
+                                        
+        if rec_depth == 0 or \
+           (rec_depth <= 1 and num_probe_words_considered < 200):
+#           rec_depth <= 2:                       
+#           rec_depth <= 3:                       
+#           rec_depth <= 5:
+#           rec_depth <= 3 and num_probe_words_considered %1000 == 0:
+            rem_word_str = ' rem_words: ' + str(len(remaining_word_list)) + ' : ' + str(remaining_word_list[0:7])
+            if len(remaining_word_list) > 7:
+                rem_word_str += '...'
+            print('\n' + space + '->' + str(rec_depth) + aw_print_str + ' pwp: ' + str(probe_word_path) + ' rem_words: ' + rem_word_str, end='')
+        elif rec_depth != gl_last_rec_depth:
+            print(str(rec_depth) + a_or_b, end='', flush=True)
+        #elif num_probe_words_considered %1000 == 0:
+        #    print('.', end='', flush=True)
+
+        gl_last_rec_depth = rec_depth
+
+
+        #data structures to optimize going deeper
+        remaining_words_1_dict = {}  #key:   tcombo that these answer_words got marked
+                                     #       in comparison to probe_word
+                                     #value: list: [remaining_word_list from tcombo,
+                                     #              list of answer_word that all deliver this
+                                     #              remaining_words_list]
+        probe_word_cost = 1          #cost to play the probe word
+        num_probe_words_considered += 1
+        for answer_word in remaining_word_list:
+            if answer_word == probe_word:
+                if print_p:
+                    print(space + 'testing answer_word: /' + answer_word + '/, matches probe word so 0 cost')
+                #this answer_word matches the probe word so requires no other probes,
+                #move on to the next answer_word
+                mark_cost = 0
+                probe_word_mark_tree[tcombo] = answer_word
+                continue
+            
+            i_answer_word = gl_answer_word_index_dict.get(answer_word)
+            mark_index = gl_probe_answer_word_mark_ar[i_probe_word, i_answer_word]
+            if mark_index == -1:
+                combo = markProbeWordAgainstCorrectWord(probe_word, answer_word)
+                tcombo = tuple(combo)
+                mark_index = gl_tcombo_mark_index_dict[tcombo]
+                gl_probe_answer_word_mark_ar[i_probe_word, i_answer_word] = mark_index               
+            else:
+                tcombo = gl_mark_index_tcombo_dict[mark_index]
+
+            #will need to call pruneWordsPerProbeResponse, so throw all of the answer_words
+            #that return the same combo mark for probe words into a bin and deal with
+            #them as a bundle
+            answer_words_for_tcombo = remaining_words_1_dict.get(tcombo)
+            if answer_words_for_tcombo == None:
+                answer_words_for_tcombo = []
+                remaining_words_1_dict[tcombo] = answer_words_for_tcombo
+            answer_words_for_tcombo.append(answer_word)
+
+        #^for answer_word in remaining_word_list:
+
+        #handle the answer_words that require another probe_word split on a per combo basis
+        tcombo_count = 0
+        for tcombo in remaining_words_1_dict.keys():
+            tcombo_count += 1
+            answer_words_for_tcombo = remaining_words_1_dict.get(tcombo)
+            n_answer_words_for_tcombo = len(answer_words_for_tcombo)
+            if print_p:
+                print('\n' + space + 'answer_words for tcombo: ' + str(tcombo) + ' : ' + str(answer_words_for_tcombo))
+            cue_list = [probe_word, tcombo]
+            words_remaining_1, ccl1 = pruneWordsPerProbeResponse(remaining_word_list, cue_list)
+            if print_p or print2_p:
+                wrl_str = '(' + str(len(words_remaining_1)) + ')'
+                if len(words_remaining_1) <= 8:
+                    wrl_str += str(words_remaining_1)
+                if print_p:
+                    print('\n' + space + 'after applying probe:/' + probe_word + '/ to rem_word_list:' + str(len(remaining_word_list)) + ', each of the ' + str(len(answer_words_for_tcombo)) + ' answer_words: ' + str(answer_words_for_tcombo) + ' got tcombo: ' + str(tcombo) + ' each giving words_remaining_1: ' + str(len(words_remaining_1)) + ' : ' + wrl_str)
+                
+            if len(words_remaining_1) == 1:
+                if words_remaining_1[0] == answer_words_for_tcombo[0]:
+                    if print_p or print2_p:
+                        print(space + 'words_remaining_1: ' + str(words_remaining_1) + ' matches answer_word, mark_dict is 1')
+                    mark_cost = 1
+                    probe_word_cost += mark_cost * n_answer_words_for_tcombo
+                    probe_word_mark_tree[tcombo] = words_remaining_1
+                    #no need to look at any other words, this probe word is already no better than we have
+                    if probe_word_cost >= best_probe_word_cost:  
+                        break   #break to next probe word
+                    continue    #continue with next answer_word
+
+            words_remaining_1.sort()
+            tup_wds_rem_1 = tuple(words_remaining_1)
+            #only give up on recursing if the probe words are not restricted 
+            if len(words_remaining_1) == len(remaining_word_list) and \
+               type(probe_L0) is not str:
+                mark_cost = gl_big_number + 1  #This will send it over
+                probe_word_cost += mark_cost * n_answer_words_for_tcombo
+                probe_word_mark_tree[tcombo] = words_remaining_1
+                #no need to look at any other words, this probe word is useless
+                if probe_word_cost >= best_probe_word_cost:  
+                    break    #break to next probe word
+                continue     #continue with next answer_word
+                
+            if len(words_remaining_1) == 2:
+                mark_cost = 3  # [w1, w2] costs 3:  w1: probe(w1) ; w2: probe(w1) + probe(w2)
+                probe_word_cost += mark_cost
+                probe_word_mark_tree[tcombo] = words_remaining_1
+                #no need to look at any other words, this probe word is already no better than we have
+                if probe_word_cost >= best_probe_word_cost:
+                    break   #break to next probe_word
+                continue    #continue with next answer_word
+
+            #will need to recurse. The recursion gives the mark_cost for all of the
+            #answer words together
+            mark_cost_probe_policy_list = None            
+            mark_cost_probe_policy_list = gl_word_set_probe_cost_cache.get(tup_wds_rem_1)
+            if mark_cost_probe_policy_list != None:
+                mark_cost = mark_cost_probe_policy_list[0]
+                next_level_probe_policy = mark_cost_probe_policy_list[1]
+                probe_word_cost += mark_cost
+                probe_word_mark_tree[tcombo] = next_level_probe_policy
+                if print_p:
+                    print('\n' + space + 'L' + str(rec_depth) + ' for tup_wds_rem_1: ' + str(tup_wds_rem_1) + ' got from dict L' + str(rec_depth) + ' with mark_cost: ' + str(mark_cost) + ' probe_word_cost in progress is now ' + str(probe_word_cost) + ' best probe_word_cost: ' + str(best_probe_word_cost))
+                    print('gl_word_set_probe_cost_cache: ' + str(gl_word_set_probe_cost_cache))
+                
+            else:
+                next_aw_print_str = ' (pw-L' + str(rec_depth) + '(' + str(tcombo_count) + ' of ' + str(len(remaining_words_1_dict)) + ') : ' + probe_word + ' ' + str(tcombo) + ' ' + str(probe_word_cost) + '/' + str(best_probe_word_cost) + ') '
+                
+                mark_cost, next_level_probe_policy = \
+                        countMovesToDistinguishAllRemainingWords_v4(words_remaining_1,
+                                                                    rec_depth+1,
+                                                                    None,
+                                                                    probe_word_path,
+                                                                    tcombo,
+                                                                    next_aw_print_str,
+                                                                    None)
+                probe_word_cost += mark_cost
+                probe_word_mark_tree[tcombo] = next_level_probe_policy
+                if print_p:
+                    print('\n' + space + 'got back to L' + str(rec_depth) + ' testing probe_word: ' + probe_word + ' on answer_word: /' + answer_word + '/ with mark_cost: ' + str(mark_cost) + ' probe_word_cost in progress is now ' + str(probe_word_cost) + ' best probe_word_cost: ' + str(best_probe_word_cost))
+                if probe_word_cost >= best_probe_word_cost:
+                    break
+        #^for tcombo in remaining_words_1_dict.keys():                
+
+        if probe_word_cost >= best_probe_word_cost:
+            continue   #continue with next probe word
+
+        if probe_word_cost < best_probe_word_cost:
+            if print_p:
+                print(space + 'best_probe_word_cost improved from ' + str(best_probe_word_cost) + ' to ' + str(probe_word_cost))
+            best_probe_word_cost = probe_word_cost
+            best_probe_word = probe_word
+            best_probe_policy = [probe_word, probe_word_mark_tree]
+
+        #Another way to exit early.
+        if best_probe_word_cost == best_possible_count:
+            gl_word_set_probe_cost_cache[tup_rem_wds_list] = [best_probe_word_cost, best_probe_policy]
+            if print_p or rec_depth <= 2:
+                wl_print = ''
+                if len(remaining_word_list) < 6:
+                    wl_print = ': ' + str(remaining_word_list)
+                print('\n' + space + ' L' + str(rec_depth) + a_or_b + ' returning early for remaining_word_list size ' + str(len(remaining_word_list)) + wl_print + ' returning best_probe_word: ' + str(best_probe_word) + ' best_probe_word_cost: ' + str(best_probe_word_cost) + '(best possible)  num_probe_words_considered: ' + str(num_probe_words_considered) + ' ', end='')
+            return best_probe_word_cost, best_probe_policy
+
+    #^for probe_word in probe_word_list:        
+
+    if best_probe_word_cost >= gl_big_number:
+        print('\nwarning: L' + str(rec_depth) + a_or_b + ' probe_word_list of len ' + str(len(probe_word_list)) + ' could not complete on remaining_word_list (' + str(len(remaining_word_list)) + ') ' + str(remaining_word_list))
+    
+        global gl_problem_rwl
+        gl_problem_rwl = remaining_word_list
+
+        print('adding a probe word to the gl_test_probe_word_list to try again')
+        scores = scoreProbeWords(remaining_word_list, gl_probe_word_list, None, False)
+        probe_word_to_add = scores[0][0]
+        print('adding probe word: ' + probe_word_to_add)
+        if probe_word_to_add in gl_test_probe_word_list:
+            print('...but it was already there')
+        else:
+            gl_test_probe_word_list.append(probe_word_to_add)
+        #call self again
+        return countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth, probe_L0, received_probe_word_path, prev_level_tcombo, aw_print_str, best_probe_word_cost)
+    if rec_depth == 0:
+        print('')
+
+    possiblyAddToHighScorePathsDict(best_probe_word_cost, best_probe_word, probe_word_path, remaining_word_list)
+
+    #if print_p:
+    if print_p or rec_depth <= 2:        
+        wl_print = ''
+        if len(remaining_word_list) < 6:
+            wl_print = ': ' + str(remaining_word_list)
+        print('\n' + space + ' L' + str(rec_depth) + a_or_b + ' returning for remaining_word_list size ' + str(len(remaining_word_list)) + wl_print + ' returning best_probe_word: ' + str(best_probe_word) + ' best_probe_word_cost: ' + str(best_probe_word_cost) + '  num_probe_words_considered: ' + str(num_probe_words_considered) + ' ', end='')
+    #printProbePolicy(best_probe_policy)
+    gl_word_set_probe_cost_cache[tup_rem_wds_list] = [best_probe_word_cost, best_probe_policy]
+    return best_probe_word_cost, best_probe_policy
+
+
+
+
+#Main attempt to replicate v5
+#http://sonorouschocolate.com/notes/index.php?title=The_best_strategies_for_Wordle
+#2022/01/31
+#This is a build on v3 to now at each call first get a bound on score by calling itself
+#first with a smaller gl_test_probe_word_list, then calling on the full gl_probe_word_list
+#best_cost_bound can be None or a number. As a number, it could be gl_big_number, or else
+#a reasonable cost bound.
+#This version rearranges the estimation of lower bounds to try to more breadth first.
+#
+#Returns two values: best_probe_word_cost, best_probe_policy
+#where probe_policy is a list:  [probe_word, mark_tree]
+#where
+#mark_tree is a dict:  key: tuple combo_mark
+#                      value: either
+#                        -a list of remaining_answer_words delivered by the probe_word_path to this level
+#                        -a probe_policy (list: [next probe_word and mark_tree])
+#
+def countMovesToDistinguishAllRemainingWords_v5(remaining_word_list, rec_depth = 0, probe_L0 = 'salet',
+                                                received_probe_word_path = [], prev_level_tcombo = None,
+                                                aw_print_str = ' ', best_cost_bound = None):
+
+    if rec_depth > gl_depth_limit:
+        return gl_hit_bottom_cost, None
+    global gl_last_rec_depth
+    global gl_max_rec_depth_seen
+    global gl_word_set_probe_cost_cache
+    global gl_high_score_paths_dict
+    global gl_last_remaining_word_list
+    gl_last_remaining_word_list = remaining_word_list
+    global gl_last_remaining_word_dict
+    global gl_big_remaining_word_list_list
+    global gl_test_probe_word_list
+
+    if rec_depth == 0:
+        gl_max_rec_depth_seen = 0
+        gl_high_score_paths_dict = {}
+        gl_word_set_probe_cost_cache = {}        #key:    tuple: word list
+                                                 #value:  list: [cost, probe_policy]
+        gl_big_remaining_word_list_list = []
+        gl_last_remaining_word_dict = {}
+    gl_max_rec_depth_seen = max(rec_depth, gl_max_rec_depth_seen)
+    gl_last_remaining_word_dict[rec_depth] = remaining_word_list    
+
+    if len(remaining_word_list) > 200:
+        gl_big_remaining_word_list_list.append(remaining_word_list[:])
+
+    #should be sorted already
+    tup_rem_wds_list = tuple(remaining_word_list)
+    mark_cost_probe_policy_list = None    
+    mark_cost_probe_policy_list = gl_word_set_probe_cost_cache.get(tup_rem_wds_list)
+    if mark_cost_probe_policy_list != None:
+        return mark_cost_probe_policy_list
+    rem_word_list_size = len(remaining_word_list)
+
+    #print_p = True
+    print_p = False  
+    print2_p = False
+
+    space = ''
+    for i in range(rec_depth):
+        space += '  '
+    if print_p:            
+        if len(remaining_word_list) < 10:
+            print(space + '-->countMovesTo... L' + str(rec_depth) + ' remaining: ' + str(remaining_word_list) + ' best_cost_bound: ' + str(best_cost_bound))
+        else:
+            print(space + '-->countMovesTo... L' + str(rec_depth) + ' remaining: ' + str(len(remaining_word_list))  + ' best_cost_bound: ' + str(best_cost_bound))
+
+    #Set the main_probe_word_list.
+    #For Level 0, main_probe_word_list is likely to be a single word like ['salet'].
+    #For Level 1, if the Level 0 probe word is 'salet', then use a special list of probe_words.
+    #This will be the entropy-sorted probe_words following application of the probe word 'salet',
+    #indexed by the combo mark response from application of 'salet' at Level 0.
+    #This list will contain all probe words.
+    #Otherwise, do as for Levels >= 2
+    #For Levels >= 2, -For the main_probe_word_list, if gl_probe_word_entropies_list is
+    #                  available, use the probe words from that in order, removing the ones
+    #                  used already in probe_word_path
+    #                 -If gl_probe_word_entropies_list is not available, then use
+    #                  gl_probe_word_list but removing probe_words already used.
+    #                 -The main_probe_word_is copied to to gl_test_probe_word_set.
+    #                  The first gl_top_n_probe_words_to_test (100) of these are copied to
+    #                  gl_test_probe_word_list.
+    #                 -For the initial first pass probe word set, use gl_test_probe_word_list.
+    #                  This word list might be added to along the way if the first 100 are
+    #                  not able to drill down to every answer word in the allotted depth.
+    #                  Because of this, we allow gl_test_probe_word_list to be set up in
+    #                  advance with words we know or expect will need to be added to it.
+    #  The strategy is to call this function twice at each level (so recursively).
+    #  The first call on the a reduced probe_word_list establishes a bound on cost which
+    #is used in the second, recursive call, to make it more efficient.
+    #The second call is on main_probe_word_list.
+
+    
+    
+    main_probe_word_list = None
+    if rec_depth == 0:
+        if probe_L0 != None:
+            main_probe_word_list = [probe_L0]
+            print('setting Level 0 main_probe_word_list to ' + str(main_probe_word_list))
+
+    elif rec_depth == 1:
+        #try to use entropy-ordered probe word list indexed off prev_level_tcombo
+        if len(received_probe_word_path) > 0 and \
+           received_probe_word_path[0] == 'salet' and \
+           gl_level_1_probe_word_entropies_dict_salet == None:
+            print('\n\n!!! Probelem.  At Level 1 attempting to use entropy based gl_level_1_probe_word_entropies_dict_salet but this is absent')
+            input('problem here 232:')
+            return
+            [num_answer_words, pw_entropies] = \
+                    gl_level_1_probe_word_entropies_dict_salet.get(prev_level_tcombo)
+            if num_answer_words != rem_word_list_size:
+                print('problem: expected rem_word_list_size: ' + str(rem_word_list_size) + ' to match num_answer_words: ' + str(num_answer_words) + ' from gl_level_1_probe_word_entropies_dict_salet with prev_level_tcombo: ' + str(prev_level_tcombo))
+                input('problem halt here')
+                return
+            main_probe_word_list = [ item[0] for item in pw_entropies ]
+            print('ordering Level 1 post-salet probe_word_list to ' + str(probe_word_list[0:20]) + '...')
+
+    #for the second pass through all probe words 
+    if main_probe_word_list == None:
+        global gl_probe_word_list_entropy_order
+        if gl_probe_word_list_entropy_order == None:
+            if gl_probe_word_entropies_list == None:
+                print('\nProblem: cannot produce main_probe_word_list because gl_probe_word_entropies_list is None')
+                input('problem here 2882:')
+                return
+            gl_probe_word_list_entropy_order = [ pwe[0] for pwe in gl_probe_word_entropies_list ]
+        
+        main_probe_word_list = gl_probe_word_list_entropy_order
+
+    #for the first pass through, choose top N probe words
+    if rec_depth <= 1:
+        test_probe_word_list = main_probe_word_list[0: gl_top_n_probe_words_to_test]
+    #for levels 2+, use gl_test_probe_word list.  This starts with the top N from
+    #main_probe_word_list, but then can grow if more probe words are needed.
+    #This can happen if the limited set of probe words is unable to find every answer
+    #word under the depth limit.
+    else:   
+        if gl_test_probe_word_list == None:
+            gl_test_probe_word_list = main_probe_word_list[0: gl_top_n_probe_words_to_test]
+        test_probe_word_list = gl_test_probe_word_list
+        
+        
+    #If first time calling on this remaining_word_list, call self recursively
+    #to get a reasonable cost bound.
+    if best_cost_bound == None:
+        best_cost_bound, probe_policy = \
+                countMovesToDistinguishAllRemainingWords_v5(remaining_word_list,
+                                                            rec_depth,
+                                                            probe_L0,
+                                                            received_probe_word_path,
+                                                            prev_level_tcombo,
+                                                            aw_print_str,
+                                                            gl_big_number)
+        #Second pass.  best_cost_bound has been set by the recusive call at this level,
+        #so proceed through the main function below.
+        best_probe_word_cost = gl_big_number
+        probe_word_list = main_probe_word_list
+        if rec_depth == 0 and len(main_probe_word_list) == 1:
+            print('')
+            return best_cost_bound, probe_policy
+        a_or_b = 'b'
+        if print_p:
+            print('\n' + space + 'L' + str(rec_depth) + ' returned from countMoves with best_cost_bound: ' + str(best_cost_bound) + '',end='')
+            input('pause return 1:')
+        if rec_depth <= 2:
+            print('\n' + space + 'L' + str(rec_depth) + 'b proceeding to consider ' + str(len(probe_word_list)) + ' probe words, ' + str(len(remaining_word_list)) + ' rem words with best_cost_bound: ' + str(best_cost_bound) + ' ', end='')
+
+    #First pass
+    elif best_cost_bound == gl_big_number:
+        best_probe_word_cost = gl_big_number    
+        probe_word_list = test_probe_word_list
+        a_or_b = 'a'
+        if rec_depth <= 2:
+            print('\n' + space + 'L' + str(rec_depth) + 'a first pass to consider ' + str(len(probe_word_list)) + ' probe_words, ' + str(len(remaining_word_list)) + ' rem words with best_cost_bound: ' + str(best_cost_bound) + ' ', end='')
+    else:
+        print('problem, should not be here A88s best_cost_bound: ' + str(best_cost_bound))
+        
+    #v5 test of test_probe_word_list only to see if we can get quick bounds
+    #best_cost_bound = gl_big_number
+    #best_probe_word_cost = gl_big_number    
+    #probe_word_list = test_probe_word_list
+    #a_or_b = 'a'    
+
+        
+    #Done with any needed setup, now start the work.
+    num_probe_words_considered = 0
+    best_probe_word = None
+    best_probe_word_branches = None  # list of list [tuple combo_mark, list remaining_words_in_branch]
+                                     # if a leaf, then the element is a string, the answer_word
+
+    #The best possible count for any probe_word is one that shatters the remaining_word_list
+    #into individual words which then require only one more guess each.
+    best_possible_count = len(remaining_word_list) + 1
+    
+    for probe_word in probe_word_list:
+        i_probe_word = gl_probe_word_index_dict.get(probe_word)
+        probe_word = gl_probe_word_list[i_probe_word]
+        if probe_word in received_probe_word_path:
+            continue
+        probe_word_path = received_probe_word_path[:]
+        probe_word_path.append(probe_word)
+        probe_word_mark_tree = {}  #key: combo_mark
+                                   #value: probe_policy: [next_probe_word, next_mark_tree]
+                                        
+        if rec_depth == 0 or \
+           (rec_depth <= 1 and num_probe_words_considered < 200):
+#           rec_depth <= 2:                       
+#           rec_depth <= 3:                       
+#           rec_depth <= 5:
+#           rec_depth <= 3 and num_probe_words_considered %1000 == 0:
+            rem_word_str = ' rem_words: ' + str(len(remaining_word_list)) + ' : ' + str(remaining_word_list[0:7])
+            if len(remaining_word_list) > 7:
+                rem_word_str += '...'
+            print('\n' + space + '->' + str(rec_depth) + aw_print_str + ' pwp: ' + str(probe_word_path) + ' rem_words: ' + rem_word_str, end='')
+        elif rec_depth != gl_last_rec_depth:
+            print(str(rec_depth) + a_or_b, end='', flush=True)
+        #elif num_probe_words_considered %1000 == 0:
+        #    print('.', end='', flush=True)
+
+        gl_last_rec_depth = rec_depth
+
+
+        #data structures to optimize going deeper
+        remaining_words_1_dict = {}  #key:   tcombo that these answer_words got marked
+                                     #       in comparison to probe_word
+                                     #value: list: [remaining_word_list from tcombo,
+                                     #              list of answer_word that all deliver this
+                                     #              remaining_words_list]
+        probe_word_cost = 0          #cost to play the probe word incremented with every answer_word
+        num_probe_words_considered += 1
+        for answer_word in remaining_word_list:
+
+            probe_word_cost += 1          #cost to play the probe word
+            if answer_word == probe_word:
+                if print_p:
+                    print(space + 'testing answer_word: /' + answer_word + '/, matches probe word so 0 cost')
+                #this answer_word matches the probe word so requires no other probes,
+                #move on to the next answer_word
+                mark_cost = 0
+                probe_word_mark_tree[gl_correct_tcombo] = answer_word                
+                continue
+            
+            i_answer_word = gl_answer_word_index_dict.get(answer_word)
+            mark_index = gl_probe_answer_word_mark_ar[i_probe_word, i_answer_word]
+            if mark_index == -1:
+                combo = markProbeWordAgainstCorrectWord(probe_word, answer_word)
+                tcombo = tuple(combo)
+                mark_index = gl_tcombo_mark_index_dict[tcombo]
+                gl_probe_answer_word_mark_ar[i_probe_word, i_answer_word] = mark_index               
+            else:
+                tcombo = gl_mark_index_tcombo_dict[mark_index]
+
+            #will need to call pruneWordsPerProbeResponse, so throw all of the answer_words
+            #that return the same combo mark for probe words into a bin and deal with
+            #them as a bundle
+            answer_words_for_tcombo = remaining_words_1_dict.get(tcombo)
+            if answer_words_for_tcombo == None:
+                answer_words_for_tcombo = []
+                remaining_words_1_dict[tcombo] = answer_words_for_tcombo
+            answer_words_for_tcombo.append(answer_word)
+
+        #^for answer_word in remaining_word_list:
+
+        #handle the answer_words that require another probe_word split on a per combo basis
+        tcombo_count = 0
+        for tcombo in remaining_words_1_dict.keys():
+            tcombo_count += 1
+            answer_words_for_tcombo = remaining_words_1_dict.get(tcombo)
+            n_answer_words_for_tcombo = len(answer_words_for_tcombo)
+            if print_p:
+                print('\n' + space + 'answer_words for tcombo: ' + str(tcombo) + ' : ' + str(answer_words_for_tcombo))
+            cue_list = [probe_word, tcombo]
+            words_remaining_1, ccl1 = pruneWordsPerProbeResponse(remaining_word_list, cue_list)
+            if print_p or print2_p:
+                wrl_str = '(' + str(len(words_remaining_1)) + ')'
+                if len(words_remaining_1) <= 8:
+                    wrl_str += str(words_remaining_1)
+                if print_p:
+                    print('\n' + space + 'after applying probe:/' + probe_word + '/ to rem_word_list:' + str(len(remaining_word_list)) + ', each of the ' + str(len(answer_words_for_tcombo)) + ' answer_words: ' + str(answer_words_for_tcombo) + ' got tcombo: ' + str(tcombo) + ' each giving words_remaining_1: ' + str(len(words_remaining_1)) + ' : ' + wrl_str)
+                
+            if len(words_remaining_1) == 1:
+                if words_remaining_1[0] == answer_words_for_tcombo[0]:
+                    if print_p or print2_p:
+                        print(space + 'words_remaining_1: ' + str(words_remaining_1) + ' matches answer_word, mark_dict is 1')
+                    mark_cost = 1
+                    probe_word_cost += mark_cost * n_answer_words_for_tcombo
+                    probe_word_mark_tree[tcombo] = words_remaining_1
+                    #no need to look at any other words, this probe word is already no better than we have
+                    if probe_word_cost >= best_probe_word_cost:  
+                        break   #break to next probe word
+                    continue    #continue with next answer_word
+
+            words_remaining_1.sort()
+            tup_wds_rem_1 = tuple(words_remaining_1)
+            #only give up on recursing if the probe words are not restricted 
+            if len(words_remaining_1) == len(remaining_word_list) and \
+               type(probe_L0) is not str:
+                mark_cost = gl_big_number + 1  #This will send it over
+                probe_word_cost += mark_cost * n_answer_words_for_tcombo
+                probe_word_mark_tree[tcombo] = words_remaining_1
+                #no need to look at any other words, this probe word is useless
+                if probe_word_cost >= best_probe_word_cost:  
+                    break    #break to next probe word
+                continue     #continue with next answer_word
+                
+            if len(words_remaining_1) == 2:
+                mark_cost = 3  # [w1, w2] costs 3:  w1: probe(w1) ; w2: probe(w1) + probe(w2)
+                probe_word_cost += mark_cost
+                probe_word_mark_tree[tcombo] = words_remaining_1
+                #no need to look at any other words, this probe word is already no better than we have
+                if probe_word_cost >= best_probe_word_cost:
+                    break   #break to next probe_word
+                continue    #continue with next answer_word
+
+            #will need to recurse. The recursion gives the mark_cost for all of the
+            #answer words together
+            mark_cost_probe_policy_list = None            
+            mark_cost_probe_policy_list = gl_word_set_probe_cost_cache.get(tup_wds_rem_1)
+            if mark_cost_probe_policy_list != None:
+                mark_cost = mark_cost_probe_policy_list[0]
+                next_level_probe_policy = mark_cost_probe_policy_list[1]
+                probe_word_cost += mark_cost
+
+                probe_word_mark_tree[tcombo] = next_level_probe_policy
+                if print_p:
+                    print('\n' + space + 'L' + str(rec_depth) + ' for tup_wds_rem_1: ' + str(tup_wds_rem_1) + ' got from dict L' + str(rec_depth) + ' with mark_cost: ' + str(mark_cost) + ' probe_word_cost in progress is now ' + str(probe_word_cost) + ' best probe_word_cost: ' + str(best_probe_word_cost))
+                    print('gl_word_set_probe_cost_cache: ' + str(gl_word_set_probe_cost_cache))
+                
+            else:
+                next_aw_print_str = ' (pw-L' + str(rec_depth) + '(' + str(tcombo_count) + ' of ' + str(len(remaining_words_1_dict)) + ') : ' + probe_word + ' ' + str(tcombo) + ' ' + str(probe_word_cost) + '/' + str(best_probe_word_cost) + ') '
+                
+                mark_cost, next_level_probe_policy = \
+                        countMovesToDistinguishAllRemainingWords_v5(words_remaining_1,
+                                                                    rec_depth+1,
+                                                                    None,
+                                                                    probe_word_path,
+                                                                    tcombo,
+                                                                    next_aw_print_str,
+                                                                    None)
+                probe_word_cost += mark_cost
+                probe_word_mark_tree[tcombo] = next_level_probe_policy
+                if print_p:
+                    print('\n' + space + 'got back to L' + str(rec_depth) + ' testing probe_word: ' + probe_word + ' on answer_word: /' + answer_word + '/ with mark_cost: ' + str(mark_cost) + ' probe_word_cost in progress is now ' + str(probe_word_cost) + ' best probe_word_cost: ' + str(best_probe_word_cost))
+                if probe_word_cost >= best_probe_word_cost:
+                    break
+        #^for tcombo in remaining_words_1_dict.keys():                
+
+        if probe_word_cost >= best_probe_word_cost:
+            continue   #continue with next probe word
+
+        if probe_word_cost < best_probe_word_cost:
+            if print_p:
+                print(space + 'best_probe_word_cost improved from ' + str(best_probe_word_cost) + ' to ' + str(probe_word_cost))
+            best_probe_word_cost = probe_word_cost
+            best_probe_word = probe_word
+            best_probe_policy = [probe_word, probe_word_mark_tree]
+
+        #Another way to exit early.
+        if best_probe_word_cost == best_possible_count:
+            gl_word_set_probe_cost_cache[tup_rem_wds_list] = [best_probe_word_cost, best_probe_policy]
+            if print_p or rec_depth <= 2:
+                wl_print = ''
+                if len(remaining_word_list) < 6:
+                    wl_print = ': ' + str(remaining_word_list)
+                print('\n' + space + ' L' + str(rec_depth) + a_or_b + ' returning early for remaining_word_list size ' + str(len(remaining_word_list)) + wl_print + ' returning best_probe_word: ' + str(best_probe_word) + ' best_probe_word_cost: ' + str(best_probe_word_cost) + '(best possible)  num_probe_words_considered: ' + str(num_probe_words_considered) + ' ', end='')
+            return best_probe_word_cost, best_probe_policy
+
+    #^for probe_word in probe_word_list:        
+
+    if best_probe_word_cost >= gl_big_number:
+        print('\nwarning: L' + str(rec_depth) + a_or_b + ' probe_word_list of len ' + str(len(probe_word_list)) + ' could not complete on remaining_word_list (' + str(len(remaining_word_list)) + ') ' + str(remaining_word_list))
+    
+        global gl_problem_rwl
+        gl_problem_rwl = remaining_word_list
+
+        print('adding a probe word to the gl_test_probe_word_list to try again')
+        scores = scoreProbeWords(remaining_word_list, gl_probe_word_list, None, False)
+        probe_word_to_add = scores[0][0]
+        print('adding probe word: ' + probe_word_to_add)
+        if probe_word_to_add in gl_test_probe_word_list:
+            print('...but it was already there')
+        else:
+            gl_test_probe_word_list.append(probe_word_to_add)
+        #call self again
+        return countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth, probe_L0, received_probe_word_path, prev_level_tcombo, aw_print_str, best_probe_word_cost)
+    if rec_depth == 0:
+        print('')
+
+    possiblyAddToHighScorePathsDict(best_probe_word_cost, best_probe_word, probe_word_path, remaining_word_list)
+
+    #if print_p:
+    if print_p or rec_depth <= 2:        
+        wl_print = ''
+        if len(remaining_word_list) < 6:
+            wl_print = ': ' + str(remaining_word_list)
+        print('\n' + space + ' L' + str(rec_depth) + a_or_b + ' returning for remaining_word_list size ' + str(len(remaining_word_list)) + wl_print + ' returning best_probe_word: ' + str(best_probe_word) + ' best_probe_word_cost: ' + str(best_probe_word_cost) + '  num_probe_words_considered: ' + str(num_probe_words_considered) + ' ', end='')
+    #printProbePolicy(best_probe_policy)
+    gl_word_set_probe_cost_cache[tup_rem_wds_list] = [best_probe_word_cost, best_probe_policy]
+    return best_probe_word_cost, best_probe_policy
 
