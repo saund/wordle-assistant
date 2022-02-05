@@ -18,7 +18,7 @@ If your goal is to find the answer quickly on average, chose the smallest "avera
 <p>
 Since the initial searches are only one ply deep, the scores returned are not actually optimal.  But they are close.
 <p>
-The possible answer words and probe words were collected from the wordle game.  The number of possible answer words is 2,315 and the number of possible probe words is 12,970. The English language has a lot of obscure words that you can enter as probes but Wordle is kind enough to select only more common words as possible answers.
+The possible answer words and probe words were collected from the wordle game.  The number of possible answer words is 2,315 and the number of possible probe words is 12,972. The English language has a lot of obscure words that you can enter as probes but Wordle is kind enough to select only more common words as possible answers.
 <p>
 wordleAssistant runs in a command line in python3.<br>
  For instructions on how to run the program, see the documentation at the beginning of /src/wordleAssistant.py
