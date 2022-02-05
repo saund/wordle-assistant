@@ -66,12 +66,14 @@ only 6 possible answer words!   So you can imagine that it will take
 weeks of compute time to find all 2315 answer words.
 The printouts illustrate how the program is working its way through probe words.
 
+>>> wa.printProbePolicy(res[1])
+
 
 This takes about 90 seconds.
->>> res = wa.countMovesToDistinguishAllRemainingWords(answer_word_list[0:40, 0, 'salet')
+>>> res = wa.countMovesToDistinguishAllRemainingWords(answer_word_list[0:40], 0, 'salet')
 
 This takes about a 45 minutes
->>> res = wa.countMovesToDistinguishAllRemainingWords(answer_word_list[0:100, 0, 'salet')
+>>> res = wa.countMovesToDistinguishAllRemainingWords(answer_word_list[0:100], 0, 'salet')
 
 On the full answer word set, it takes about an hour to find just the initial first-pass
 bound estimate employing only the first 100 probe words.  My program orders probe_words

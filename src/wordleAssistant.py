@@ -1,8 +1,9 @@
 
 #wordleAssistant.py
 #Eric Saund
-#2022/01/25
+#2022/01/25 - 2022/02/05
 #I was going to avoid wasting time on wordle but my friend Don provoked me to do this.
+#And then, much worse, after I learned about the optimal solution I wanted to replicate it.
 #
 #This program is a Wordle Assistant.
 #Given some set of candidate probe words and some constraints provided by responses
@@ -19,6 +20,18 @@
 #When the list of remaining words is small enough, the third score computed is the
 #expected number of moves required to find the answer word.  This is computed by
 #fully expanding the tree of next probe moves within the remaining words.
+#
+#This program allows for an unfair advantage at the last choice when a small number of
+#possible words remain with equal probability.  In this case, the remaining words are
+#presented in the order they occur in the Wordle game javascript,
+#https://www.powerlanguage.co.uk/wordle/
+#The way the Wordle game is written, that word ordering happens to be the order in
+#which answer words occur, day to day.  There are 2,315 answer words.  So early on
+#in the game's history, on dates when answer appears early in this list, the correct
+#answer is likely to be the first among those suggested by my program at the last stage.
+#When the game is older, then the correct word will be more likely to be a second
+#or third choice in the final set of equal probability remaining words.
+#
 
 
 ################################################################################
@@ -63,7 +76,6 @@
 #      call runGame('h') to get a brief help printout.
 #
 #      run runGame() in conjunction with your Wordle game running in your browser.
-#
 #      runGame will alternately ask you to enter the probe word typed into Wordle,
 #      and Wordle game responses in the form of green, yellow, and gray tile colors
 #      marking your probe entry.
@@ -102,13 +114,13 @@
 #
 #8. I recommend using 'raise' as the initial probe word.
 #   Other investigators have discovered that the optimal initial word is 'salet'.
-#   Below, I attempted to replicate this through full expansion of the search tree,
-#   but my code is not efficient enough to run on the full set of answer words and
-#   probe words.
+#   In a second section of this file, I attempted to replicate this through full expansion
+#   of the search tree. But my code is not efficient enough to run on the full set of
+#   answer words and probe words.
 #   From running the function, wa.scoreProbeWords() on all words, this program suggests
 #   the following probe words in order of score, but you can choose whatever you like.
 #
-#0   ['roate', 60.42462203023758, 195]
+#0   ['roate', 60.42462203023758, 195]  60.24 is average number of remaining words. 195 is max.
 #1   ['raise', 61.00086393088553, 168]
 #2   ['raile', 61.33088552915767, 173]
 #3   ['soare', 62.30107991360691, 183]
@@ -1218,7 +1230,7 @@ except:
 #Delving deeper into wordle solver algorithms, per
 #
 #https://www.poirrier.ca/notes/wordle-optimal/
-#and the recursive counting algoirthm of
+#and the recursive counting algorithm of
 #Alex Selby, 19 January, 2022
 #http://sonorouschocolate.com/notes/index.php?title=The_best_strategies_for_Wordle
 #
@@ -1228,7 +1240,7 @@ except:
 #*think* the issue is the difference in the efficiencey of the inner loop functions
 #in my more readable python implementation running on a laptop vs. his highly optimized
 #C++ program running on a desktop machine.
-#This section contains other useful code like for writing out and viewing a
+#This section also contains other useful code like for writing out and viewing a
 #probe-word policy.
 #
 
@@ -1506,14 +1518,11 @@ def readProbeAnswerWordMarkArFromFile(filename = None):
 
 
 
-    
-
 #gl_mark_index_tcombo_dict is key: int
 #                             value: tuple of 5 char response values in {'r', 'l', 'y'}
 #gl_tcombo_mark_index_dict is key: tuple of 5 char response values in {'r', 'l', 'y'} 
 #                             value: int index
 
-    
 def generateMarkIndexTComboDict():
     global gl_mark_index_tcombo_dict
     global gl_tcombo_mark_index_dict
@@ -1529,72 +1538,6 @@ try:
     gl_mark_index_tcombo_dict
 except:
     generateMarkIndexTComboDict()
-
-
-
-
-
-#key: tuple of word:   (w1, w2, ... ) where w1, w2...are a sorted list of remaining words
-#value: list[best_probe_word, best_probe_cost]
-#This dict is created in the call to initial Level 0 call to countMovesToDistinguishAllRemainingWords()
-gl_word_set_probe_cost_cache = {}
-
-#Assumes words in word_tup are sorted.
-#not needed, just use the dict directly
-def addToWordSetProbeCostCache(word_tup, probe_word, mark_cost):
-    #print('addToWordSetProbeCostCache(' + str(word_list) + ' ' + str([probe_word, mark_cost]))
-    global gl_word_set_probe_cost_cache
-    #word_list.sort()
-    #key = tuple(word_list)
-    #existing = gl_word_set_probe_cost_cache.get(word_tup)
-    #if existing != None:
-    #    print('word_list: ' + str(word_list) + ' is already in cache as ' + str(existing) + ' and being added again as [' + probe_word + ', ' + str(probe_word_cost) + ']')
-    gl_word_set_probe_cost_cache[word_tup] = [probe_word, mark_cost]
-
-    
-#Assumes words in word_tup are sorted
-#returns None or list [probe_word, mark_cost]
-#not needed, just use the dict directly
-def getWordSetProbeCostFromCache(word_tup):
-    global gl_word_set_probe_cost_cache
-    #if word_list is list:
-    #    word_list.sort()
-    key = tuple(word_list)
-    return gl_word_set_probe_cost_cache.get(key)
-
-
-gl_max_words_for_cache = 300
-
-#gl_probe_mark_word_set_cost_cache is key: tuple of
-#           list(probe_word, tcombo, word_list)
-#           where tcombo is a tuple of mark chars 'r', 'l', 'y'
-# cost is a int number of moves to disambiguate all words in word_list given
-# probe applied to word list, of which one word is the answer word, and having
-# gotten the mark, char_combo
-#no longer used
-def addToProbeMarkWordSetCostCache(probe, char_combo, word_list, mark_cost):
-    if len(word_list) > gl_max_words_for_cache:
-        print('word_list ' + str(len(word_list)) + ' exceeds max cache key size: ' + str(gl_max_words_for_cache))
-        return False
-    if probe == None:
-        aa = 232/0
-    global gl_probe_mark_word_set_cost_cache
-    if word_list is list:
-        word_list.sort()
-    key = tuple(word_list)
-    gl_probe_mark_word_set_cost_cache[key] = mark_cost
-    return True
-
-#no longer used
-def getCostFromProbeMarkWordSetCostCache(probe, char_combo, word_list):
-    if len(word_list) > gl_max_words_for_cache:
-        return None
-    global gl_probe_mark_word_set_cost_cache
-    if word_list is list:
-        word_list.sort()
-    key = tuple(word_list)    
-    mark_cost = gl_probe_mark_word_set_cost_cache.get(key)
-    return mark_cost
 
 
 #
@@ -1744,11 +1687,13 @@ gl_hit_bottom_cost = gl_big_number + 3
 #2022/02/03
 #
 #Bounds based search strategy:
-#At every every node of the search tree, first compute a fast bound with the top 100
-#probe words to get an initial estimated probe policy and upper bound on cost of
-#playing probe words to get to every answer word.
-#Then, using the cost as an upper bound on how much any other probe word can cost,
-#run through the full set of probe words and find if there is any that can do better.
+#At every every node of the search tree, first compute an upper bound on total cost
+#of finding all answer words given the probe word policy for playing probe words
+#to get to every answer word.  The upper bound is computed using just the the top 100
+#probe words to get an initial probe word policy.
+#Then, using the cost as an upper bound on how much any other probe word can cost
+#(from the full set of 12972 probe words), run through the full set of probe words and
+#find if there is any that can do better.
 #
 #Returns two values: best_probe_word_cost, best_probe_policy
 #where probe_policy is a list:  [probe_word, mark_tree]
@@ -1758,8 +1703,9 @@ gl_hit_bottom_cost = gl_big_number + 3
 #                        -a list of remaining_answer_words delivered by the probe_word_path to this level
 #                        -a probe_policy (list: [next probe_word and mark_tree])
 #
+#This will apply sort to the remaining_word_list passed.
 #This turns out to be too inefficient to deliver an answer on the full
-#2513/12972 answer-word/probe-word problem.   This appears to give the correct answers on
+#2513 x 12972 answer-word/probe-word problem.   This appears to give the correct answers on
 #subsets of the problem.  I am not absolutely positive that I have all of the optimizations
 #correct, but I think so.  I think that fundamenally there is no escaping having to run
 #many many tests of probe words against answer words, compute response combo mark,
@@ -1769,31 +1715,44 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
                                              received_probe_word_path = [], prev_level_tcombo = None,
                                              aw_print_str = ' ', bound_intent = None):
         
-    #print('countMoves: bound_intent: ' + str(bound_intent))
-    #input('pausing bound intent:')
     if bound_intent == 'fast':
         depth_limit = gl_depth_limit_fast
-    elif bound_intent == 'medium':
-        depth_limit = gl_depth_limit_full
     else:        
         depth_limit = gl_depth_limit_full
     if rec_depth > depth_limit:
         print('D', end='', flush=True)
-        #print('returning depth limit cost and None policy: ' + str(gl_hit_bottom_cost))
         return gl_hit_bottom_cost, None
+    
+    #development and debugging
     global gl_last_rec_depth
     global gl_max_rec_depth_seen
-    global gl_word_set_probe_cost_cache
     global gl_high_score_paths_dict
-    global gl_last_remaining_word_list
-    gl_last_remaining_word_list = remaining_word_list
     global gl_last_remaining_word_dict
     global gl_big_remaining_word_list_list
-    global gl_test_probe_word_list
-    global gl_test_probe_word_list_medium
-    global gl_probe_word_list_entropy_order
-    global gl_last_fast_cost_probe_policy
+    global gl_last_fast_cost_probe_policy    
+    global gl_last_remaining_word_list
+    gl_last_remaining_word_list = remaining_word_list
 
+    #Actually needed by the program.
+    global gl_probe_word_list_entropy_order   
+    global gl_test_probe_word_list
+    global gl_probe_answer_word_mark_ar    #for efficiency in getting mark for probe per answer word
+    global gl_word_set_probe_cost_cache    #key: str bound_intent in {'fast', 'full'}, or None
+                                           #value: dict:
+                                           #key: tuple of word:   (w1, w2, ... )
+                                           #   where w1, w2... is a sorted list of
+                                           #   remaining answer words
+                                           #value: list: [probe_word_cost, probe_policy]
+                                           #  where probe_policy is a nested data structure:
+                                           #  list:  [probe_word, mark_tree]
+                                           #    where mark_tree is a dict:
+                                           #      key: combo_mark: tuple like ('y', 'l', 'y', 'r', 'y')
+                                           #      value: either
+                                           #       -a list of remaining_answer_words delivered
+                                           #        by the probe_word_path to this level
+                                           #       -a probe_policy (list: [next probe_word and mark_tree])
+
+    #setup with the initial function call
     if rec_depth == 0 and bound_intent == None:
         gl_max_rec_depth_seen = 0
         gl_high_score_paths_dict = {}
@@ -1804,6 +1763,7 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
         gl_word_set_probe_cost_cache = {'fast':{},   #Each dict is  key:    tuple: word list
                                         'full':{}}   #              value:  list: [cost, probe_policy]
 
+        #setup probe word lists
         if gl_probe_word_list_entropy_order == None:
             if gl_probe_word_entropies_list == None:
                 print('\nProblem: cannot produce main_probe_word_list because gl_probe_word_entropies_list is None')
@@ -1812,23 +1772,26 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
             gl_probe_word_list_entropy_order = [ pwe[0] for pwe in gl_probe_word_entropies_list ]
             gl_test_probe_word_list = gl_probe_word_list_entropy_order[0:gl_top_n_probe_words_to_test]
 
+        remaining_word_list.sort()
+        #really launch into the program
         return countMovesToDistinguishAllRemainingWords(remaining_word_list, 0, probe_L0,
                                                         received_probe_word_path,
                                                         None, ' ', 'full')
         
     gl_max_rec_depth_seen = max(rec_depth, gl_max_rec_depth_seen)
     gl_last_remaining_word_dict[rec_depth] = remaining_word_list  
-
     if len(remaining_word_list) > 200:
         gl_big_remaining_word_list_list.append(remaining_word_list[:])
 
-    #should be sorted already
-    tup_rem_wds_list = tuple(remaining_word_list)
+    #Return the cached value, [cost, probe_policy] if available from the cache
+    #should be sorted already so this tuple should be consistent throughout recursive calls
+    tup_rem_wds_list = tuple(remaining_word_list) 
     mark_cost_probe_policy_list_bi = None
     mark_cost_probe_policy_list_bi = gl_word_set_probe_cost_cache[bound_intent].get(tup_rem_wds_list)
     if mark_cost_probe_policy_list_bi != None:
         return mark_cost_probe_policy_list_bi
-    
+
+    #If bound_intent is 'full', call self recursively to first obtain an upper cost bound in 'fast' mode.
     if bound_intent == 'fast':
         best_probe_word_cost = gl_big_number
         best_probe_policy = None
@@ -1839,10 +1802,10 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
         a_or_b = 'a'
 
     else:
-        mark_cost_probe_policy_list_full = None
-        mark_cost_probe_policy_list_full = gl_word_set_probe_cost_cache['full'].get(tup_rem_wds_list)
-        if mark_cost_probe_policy_list_full != None:
-            return mark_cost_probe_policy_list_full
+#        mark_cost_probe_policy_list_full = None
+#        mark_cost_probe_policy_list_full = gl_word_set_probe_cost_cache['full'].get(tup_rem_wds_list)
+#        if mark_cost_probe_policy_list_full != None:
+#            return mark_cost_probe_policy_list_full
         fast_cost_bound, fast_probe_policy = \
                     countMovesToDistinguishAllRemainingWords(remaining_word_list,
                                                              rec_depth, probe_L0,
@@ -1864,10 +1827,10 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
             #actually it seems that the order for the full list doesn't matter
             probe_word_list = gl_probe_word_list_entropy_order
         a_or_b = 'b'
-        
+
+    #printing progress
     #print_p = True
     print_p = False  
-
     space = ''
     for i in range(rec_depth):
         space += '  '
@@ -1880,8 +1843,6 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
 
     num_probe_words_considered = 0
     best_probe_word = None
-    best_probe_word_branches = None  # list of list [tuple combo_mark, list remaining_words_in_branch]
-                                     # if a leaf, then the element is a string, the answer_word
 
     #The best possible count for any probe_word is one that shatters the remaining_word_list
     #into individual words which then require only one more guess each.
@@ -1894,15 +1855,15 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
             continue
         probe_word_path = received_probe_word_path[:]
         probe_word_path.append(probe_word)
-        probe_word_mark_tree = {}  #key: combo_mark
+        probe_word_mark_tree = {}  #key:   combo_mark
                                    #value: probe_policy: [next_probe_word, next_mark_tree]
 
 #different levels of print out of progress
         if rec_depth == 0 or \
-#           rec_depth <= 2            
+           (rec_depth <= 2 and num_probe_words_considered < 20):                          
+#           rec_depth <= 2:
 #           'ardor' in probe_word_path:
 #           (rec_depth <= 1 and num_probe_words_considered < 200):
-#           (rec_depth <= 2 and num_probe_words_considered < 20):               
 #           rec_depth <= 1:           
 #           rec_depth <= 3:                       
 #           rec_depth <= 5:
@@ -1933,21 +1894,22 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
                 mark_cost = 0
                 probe_word_mark_tree[gl_correct_tcombo] = answer_word
                 continue
-            
+
+            #get mark response to probe vs. answer as a tcombo, a 5-tuple of chars in {'y', 'r', 'l'}
             i_answer_word = gl_answer_word_index_dict.get(answer_word)
             if i_answer_word == None:
-                print('i_answer_word is None for answer_word: ' + answer_word)
+                print('i_answer_word is None for answer_word: ' + answer_word) #error check
                 return
             mark_index = gl_probe_answer_word_mark_ar[i_probe_word, i_answer_word]
             if mark_index == -1:
-                combo = markProbeWordAgainstCorrectWord(probe_word, answer_word)
-                tcombo = tuple(combo)
-                mark_index = gl_tcombo_mark_index_dict[tcombo]
+                combo = markProbeWordAgainstCorrectWord(probe_word, answer_word) #list of {'y', 'r', 'l'}
+                tcombo = tuple(combo)                              #like ('y', 'r', 'l', 'l', 'y')
+                mark_index = gl_tcombo_mark_index_dict[tcombo]     #int
                 gl_probe_answer_word_mark_ar[i_probe_word, i_answer_word] = mark_index               
             else:
-                tcombo = gl_mark_index_tcombo_dict[mark_index]
+                tcombo = gl_mark_index_tcombo_dict[mark_index]     #turn int back into tcombo
 
-            #will need to call pruneWordsPerProbeResponse, so throw all of the answer_words
+            #will need to call pruneWordsPerProbeResponse(), so throw all of the answer_words
             #that return the same combo mark for probe words into a bin and deal with
             #them as a bundle
             answer_words_for_tcombo = remaining_words_1_dict.get(tcombo)
@@ -1955,26 +1917,21 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
                 answer_words_for_tcombo = []
                 remaining_words_1_dict[tcombo] = answer_words_for_tcombo
             answer_words_for_tcombo.append(answer_word)
-
         #^for answer_word in remaining_word_list:
 
-        #now probe_word_cost accounts for all of the remaining_word_list that either
-        #matches the probe_word or else gets delivered as unique after the probe_word
-        #has been played.
+        #handle the answer_words that require another probe_word play on a per combo mark basis
+        tcombo_count = 0   #for printout only 
 
-        #handle the answer_words that require another probe_word split on a per combo basis
-        tcombo_count = 0
-
+        #Figure a lower bound on remaining probe word cost based on a best case that 
+        #each remaining answer word can be hit with only one more probe_word play.
+        #We'll update the actual probe_word cost as the real cost of each words_remaining_1 is learned.
         lower_bound_from_tcombos = 0
         for tcombo in remaining_words_1_dict.keys():
-            #this lower bound is based on a best case of one more probe word play that hits
-            #each remaining answer word with one more probe_word
             lower_bound_from_tcombos += len(remaining_words_1_dict.get(tcombo))
-
-        #Boost the probe_word_cost to the minimum it could possibly be.
-        #Then updated it as the real cost of each words_remaining_1 is learned
         probe_word_cost = probe_word_cost + lower_bound_from_tcombos
-        #as we work our way through the tcombos, 
+ 
+        #Work through the combo mark responses to the probe word on the answer word,
+        #max num tcombos is 3^5 = 243.   
         for tcombo in remaining_words_1_dict.keys():
             tcombo_count += 1
             answer_words_for_tcombo = remaining_words_1_dict.get(tcombo)
@@ -1982,6 +1939,7 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
             if print_p:
                 print('\n' + space + 'answer_words for tcombo: ' + str(tcombo) + ' : ' + str(answer_words_for_tcombo))
             cue_list = [probe_word, tcombo]
+            #costly step here
             words_remaining_1, ccl1 = pruneWordsPerProbeResponse(remaining_word_list, cue_list)
             if print_p:
                 wrl_str = '(' + str(len(words_remaining_1)) + ')'
@@ -1989,7 +1947,8 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
                     wrl_str += str(words_remaining_1)
                 if print_p:
                     print('\n' + space + 'after applying probe:/' + probe_word + '/ to rem_word_list:' + str(len(remaining_word_list)) + ', each of the ' + str(len(answer_words_for_tcombo)) + ' answer_words: ' + str(answer_words_for_tcombo) + ' got tcombo: ' + str(tcombo) + ' each giving words_remaining_1: ' + str(len(words_remaining_1)) + ' : ' + wrl_str)
-                
+
+            #probe_word has narrowed down to one remaining answer word
             if len(words_remaining_1) == 1:
                 if words_remaining_1[0] == answer_words_for_tcombo[0]:
                     if print_p:
@@ -1997,10 +1956,11 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
                     mark_cost = 1
                     #this will be a wash in terms of probe_word_cost
                     probe_word_mark_tree[tcombo] = words_remaining_1
-                    #no need to look at any other words, this probe word is already no better than we have
+                    #check for no need to look at any other words, this probe word is already
+                    #no better than we have
                     if probe_word_cost >= best_probe_word_cost:
                         break   #break to next probe word
-                    continue    #continue with next answer_word
+                    continue    #continue with next tcombo
 
             words_remaining_1.sort()
             tup_wds_rem_1 = tuple(words_remaining_1)
@@ -2013,21 +1973,21 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
                 #no need to look at any other words, this probe word is useless
                 if probe_word_cost >= best_probe_word_cost:  
                     break    #break to next probe word
-                continue     #continue with next answer_word
+                continue     #continue with next tcombo
                 
             if len(words_remaining_1) == 2:
                 mark_cost = 3  # [w1, w2] costs 3:  w1: probe(w1) ; w2: probe(w1) + probe(w2)
                 probe_word_cost += 1  #mark cost minus 2 already talled as min for these words remaining
-                #This is a wash as for probe word cost bound
                 probe_word_mark_tree[tcombo] = words_remaining_1
-                #no need to look at any other words, this probe word is already no better than we have
+                #check for no need to look at any other words, this probe word is already
+                #no better than we have
                 if probe_word_cost >= best_probe_word_cost:
                     break   #break to next probe_word
-                continue    #continue with next answer_word
+                continue    #continue with next tcombo
 
-            #Will need to recurse. The recursion gives the mark_cost for all of the
-            #answer words together
-            #Is the answer in the cache?
+            #Will need to recurse to get cost for the answer words that this probe word
+            #narrows down to. 
+            #First, is the answer in the cache?
             mark_cost_probe_policy_list = gl_word_set_probe_cost_cache[bound_intent].get(tup_wds_rem_1)
             if mark_cost_probe_policy_list != None:
                 mark_cost = mark_cost_probe_policy_list[0]
@@ -2062,11 +2022,12 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
 
                 if probe_word_cost >= best_probe_word_cost:
                     print(';', end='', flush=True)
-                    break
+                    break    #break to next probe_word
         #^for tcombo in remaining_words_1_dict.keys():                
 
+        #This test should have been performed already but just to make sure...
         if probe_word_cost >= best_probe_word_cost:
-            continue   #continue with next probe word
+            continue   #continue with next probe word. 
 
         if probe_word_cost < best_probe_word_cost:
             if print_p:
@@ -2080,6 +2041,7 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
 
         #Another way to exit early.
         if best_probe_word_cost == best_possible_count:
+            #whatever we learned from this call, store it in the cache
             gl_word_set_probe_cost_cache[bound_intent][tup_rem_wds_list] = \
                                         [best_probe_word_cost, best_probe_policy]
             if print_p or rec_depth <= 2:
@@ -2091,11 +2053,11 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
                 print('\n\n Returning ' + bound_intent + ' cost ' + str(best_probe_word_cost) + ' probe_policy: ' + str(best_probe_policy) + '\n\n')
 
             return best_probe_word_cost, best_probe_policy
-
     #^for probe_word in probe_word_list:        
 
     #If we haven't found any probe word to split the answer words, we'll need to add
-    #to the probe_word set.  This only applies in fast mode.
+    #to the probe_word set.  This applies only in fast mode where an answer_word might
+    #not be in the probe_word_list.
     if best_probe_word_cost >= gl_big_number:
         print('\nwarning: L' + str(rec_depth) + a_or_b + ' probe_word_list of len ' + str(len(probe_word_list)) + ' could not complete on remaining_word_list (' + str(len(remaining_word_list)) + ') ' + str(remaining_word_list))
     
@@ -2111,10 +2073,11 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
         else:
             gl_test_probe_word_list.append(probe_word_to_add)
         #call self again
-        return countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth, probe_L0, received_probe_word_path, prev_level_tcombo, aw_print_str, bound_intent)
-    if rec_depth == 0:
-        print('')
+        return countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth,
+                                                        probe_L0, received_probe_word_path,
+                                                        prev_level_tcombo, aw_print_str, bound_intent)
 
+    #development and debugging
     possiblyAddToHighScorePathsDict(best_probe_word_cost, best_probe_word, probe_word_path, remaining_word_list)
 
     if print_p or rec_depth <= 2:        
@@ -2123,6 +2086,7 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
             wl_print = ': ' + str(remaining_word_list)
         print('\n' + space + ' L' + str(rec_depth) + a_or_b + ' returning for remaining_word_list size ' + str(len(remaining_word_list)) + wl_print + ' returning best_probe_word: ' + str(best_probe_word) + ' best_probe_word_cost: ' + str(best_probe_word_cost) + '  num_probe_words_considered: ' + str(num_probe_words_considered) + ' ', end='')
 
+    #whatever we learned from this call, store it in the cache
     gl_word_set_probe_cost_cache[bound_intent][tup_rem_wds_list] = \
                                     [best_probe_word_cost, best_probe_policy]
     if rec_depth == 0:
@@ -2264,9 +2228,6 @@ def convertProbePolicyToJsonWritable(probe_policy):
         next_tdict = tdict.get(tcombo)
         new_tdict[str_combo] = convertProbePolicyToJsonWritable(next_tdict)
     return [probe_policy[0], new_tdict]
-    
-            
-
 
 
 
@@ -2409,7 +2370,7 @@ gl_level_1_probe_word_100_entropies_dict_filename = 'level-1-probe-word-100-entr
 #No longer used
 gl_level_1_probe_word_entropies_dict_filename = 'level-1-probe-word-entropies-dict-salet.text'
 
-
+#No longer used
 def writeLevel1ProbeWordEntropiesDictToFile(level_1_probe_word_100_entropies_dict, filename = None):
     if filename == None:
         filename = gl_level_1_probe_word_100_entropies_dict_filename
@@ -2427,10 +2388,7 @@ def writeDictToFile(a_dict, filename):
         file.write(output_str)
 
 
-
-        
-
-
+#No longer used
 def readLevel1ProbeWordEntropiesDictFromFile(filename = None):
     if filename == None:
         filename = gl_level_1_probe_word_100_entropies_dict_filename
@@ -2455,91 +2413,6 @@ def readDictFromFile(filename):
         print('len: ' + str(len(the_dict)))
     return the_dict
 
-
-def readDictFromFile_old(filename):
-    with open(filename, 'r', encoding='utf-8') as file:
-        input_str = ''
-        count = 0
-        for line in file:
-            if line.find('#') >= 0:
-                continue
-            print(str(count) + ': ' + line)
-            count += 1
-            if len(line) > 0:
-                input_str += line
-        #print('/' + input_str + '/')
-        print('finished reading file, ' + str(count) + ' lines, json.loads() converting to dict...')
-        the_dict = json.loads(input_str)
-        print('len: ' + str(len(the_dict)))
-    return the_dict
-
-
-
-
-def findBestProbeWordToDistinguishAllRemainingWords_old(remaining_word_list, iter = 0):
-    global gl_call_count
-    if iter == 0:
-        gl_call_count = 0
-    gl_call_count += 1
-    if iter > 10:
-        return
-    print_p = False
-    if print_p:
-        space = ' '
-        for i in range(iter):
-            space += '  '
-        print(space + 'findBest( ' + str(remaining_word_list) + ' iter: ' + str(iter))
-        if len(remaining_word_list) == 1:
-            #return [None, iter]
-            return [None, 0]
-    
-    min_probe_counts_to_finish = [[], 100000]
-    for probe_word in gl_probe_word_list:
-        count_sum = 0    #sum: num probes to find all answer words
-        for answer_word in remaining_word_list:
-            if print_p:
-                print(space + probe_word + '  ' + answer_word + ' remaining: ' + str(len(remaining_word_list)) + ' iter: ' + str(iter))
-            #apply probe assuming answer word
-            mark = markProbeWordAgainstCorrectWord(probe_word, answer_word)
-            cue_list = [probe_word, mark]
-            words_remaining_1, ccl1 = pruneWordsPerProbeResponse(remaining_word_list, cue_list)
-            if len(words_remaining_1) == len(remaining_word_list):
-                #this probe is not helpful
-                continue
-            #print('cue_list: ' + str(cue_list))
-            #print('words_remaining_1: ' + str(words_remaining_1))
-            if len(words_remaining_1) == 0:
-                print('why 0 words_remaining? probe_word: ' + probe_word + ' answer_word: ' + answer_word + ' remaining_word_list: ' + str(len(remaining_word_list)))
-                continue
-            if len(words_remaining_1) == 1:
-                if words_remaining_1[0] != answer_word:
-                    print('problem: sole word remaining ' + str(words_rmaining_1) + ' is not answer word: ' + answer_word)
-                    return
-                else:
-                    #probe_and_counts_to_finish = [None, iter]
-                    probe_and_counts_to_finish = [None, 0]                    
-            else:
-                probe_and_counts_to_finish = findBestProbeWordToDistinguishAllRemainingWords(words_remaining_1, iter+1)
-            if print_p:
-                print(space + 'probe_and_counts_to_finish: ' + str(probe_and_counts_to_finish))
-            max_counts_to_finish = max(max_counts_to_finish, probe_and_counts_to_finish[1])
-
-            
-        #^for answer_word in remaining_word_list
-
-        if max_counts_to_finish < min_probe_counts_to_finish[1]:
-            min_probe_counts_to_finish[0].append(probe_word)
-            min_probe_counts_to_finish = [min_probe_counts_to_finish[0], max_counts_to_finish]
-            if print_p:
-                print(space + 'min_probe_counts_to_finish to: ' + str(min_probe_counts_to_finish))
-        if min_probe_counts_to_finish[1] == 1:
-            #no need to try other probe words to separate these remaining_words
-            if print_p:
-                print(space + 'no need to try more probe words')
-            break
-    #print('returning min_probe_counts_to_finish: ' + str(min_probe_counts_to_finish))
-    return [min_probe_counts_to_finish[0], min_probe_counts_to_finish[1]+1]
-            
 
 #
 #
@@ -2681,9 +2554,6 @@ def makeSimpleChainPolicy(answer_word_list):
         this_pn.child_pn_ar = next_pn
         this_pn = next_pn
     return root_pn
-
-
-
 
 #
 #
