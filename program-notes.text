@@ -1,0 +1,91 @@
+
+wordle-assistant/program-notes.text
+
+The basic wordle-assistant works by one-ply lookahead search.  Depending on what
+probe word you play, wordle will respond, and its response will reduce the set of
+possible answer-words.   The strategy is to play the probe word that will reduce
+the average (or maximum) number of possible answer words.
+
+This strategy works well but is not optimal.
+This is an excellent post outlining how to expand the complete search tree.
+#http://sonorouschocolate.com/notes/index.php?title=The_best_strategies_for_Wordle
+
+I spent a lot of time trying to replicate this.  This work consumes the second half of the
+wordleAssistant.py file.
+I think my program gives correct results and includes all of the bounds based optimizations
+recommended.  But it is still way too slow to complete on the full set of 2315
+answer words x 12972 probe words.  I believe this is due to the cost of the inner
+loop functions, 
+
+pruneWordsPerCharConstraints()
+updateCharConstraintList()
+pruneWordsPerProbeResponse()
+makeCharConstraintList()
+
+My python code is nowhere near as efficient as highly optimimized C++ code.
+
+How to run the full search code:
+
+1. setup
+>>> import imp
+>>> import wordleAssistant as wa
+>>> answer_word_list = wa.gl_answer_word_list
+>>> wa.setupCountMoves()
+
+2. Compute the optimal cost and policy tree for the initial word, 'salet',
+>>> res = wa.countMovesToDistinguishAllRemainingWords(answer_word_list, 0, 'salet')
+
+3. Print the raw result.
+>>> res
+
+3. Print the policy tree in readable form.
+>>> wa.printProbePolicy(res[1])
+
+4. This might be big, so write it to a file.
+>>> wa.writeProbePolicyToFile(res[1], 'policy-salet.text')
+
+5. Spell out probe paths for all of the answer words.
+>>> sp = wa.buildSearchPathForAllWordsInProbePolicy(res[1])
+
+6. Verify the total cost of playing probes to find every word
+>>> wa.sumSearchPathCost(sp)
+
+
+The main function, countMovesToDistinguishAllRemainingWords(), prints out progress
+as it goes.  You can edit the file to change the printouts.
+
+Here is a good example set of only 6 words that illustrates why search takes so
+long.
+
+>>> small_word_list = ['apron', 'arbor', 'ardor', 'armor', 'aroma', 'arrow']
+
+>>> res = wa.countMovesToDistinguishAllRemainingWords(small_word_list, 0, 'salet')
+
+This takes about 15 seconds on my laptop.  Just to find optimum probe words to pin down
+only 6 possible answer words!   So you can imagine that it will take
+weeks of compute time to find all 2315 answer words.
+The printouts illustrate how the program is working its way through probe words.
+
+
+This takes about 90 seconds.
+>>> res = wa.countMovesToDistinguishAllRemainingWords(answer_word_list[0:40, 0, 'salet')
+
+This takes about a 45 minutes
+>>> res = wa.countMovesToDistinguishAllRemainingWords(answer_word_list[0:100, 0, 'salet')
+
+On the full answer word set, it takes about an hour to find just the initial first-pass
+bound estimate employing only the first 100 probe words.  My program orders probe_words
+in order of entropy when applied to the full answer word set.
+
+The bounds estimate I get for the first 100 words using 'salet' as the initial word is
+9409.   (In other versions of the program I have seen 9253, not sure what's going on.)
+The probe policy tree for the initial bound is unlimited. You can see the maximum depth as
+>>> wa.gl_max_rec_depth_seen
+17
+
+The depth is limited to 5 for the full search.
+Nonetheless, I estimate that it will take about 500 times this to complete search
+with the full probe word set.
+
+
+
