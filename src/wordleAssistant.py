@@ -1680,7 +1680,14 @@ except:
     gl_last_probe_policy = None
 
 gl_hit_bottom_cost = gl_big_number + 3
-    
+
+
+#To return just the fast bound estimate using the top 100 probe words, set this to True.
+try:
+    gl_exit_after_fast_only_p
+except:
+    gl_exit_after_fast_only_p = False
+
 
 #Main attempt to replicate (v7)
 #http://sonorouschocolate.com/notes/index.php?title=The_best_strategies_for_Wordle
@@ -1770,6 +1777,7 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
                 input('problem here 2882:')
                 return
             gl_probe_word_list_entropy_order = [ pwe[0] for pwe in gl_probe_word_entropies_list ]
+        if gl_test_probe_word_list == None:
             gl_test_probe_word_list = gl_probe_word_list_entropy_order[0:gl_top_n_probe_words_to_test]
 
         remaining_word_list.sort()
@@ -1814,10 +1822,9 @@ def countMovesToDistinguishAllRemainingWords(remaining_word_list, rec_depth = 0,
                                                              'fast')
         if rec_depth == 0:
             gl_last_fast_cost_probe_policy = [fast_cost_bound, fast_probe_policy]            
-            
-        #print('\npass 1 fast complete')
-        #exit early with just the fast policy
-        #return [fast_cost_bound, fast_probe_policy]
+            print('\npass 1 fast complete')
+            if gl_exit_after_fast_only_p:
+                return [fast_cost_bound, fast_probe_policy]
         
         best_probe_word_cost = fast_cost_bound
         best_probe_policy = fast_probe_policy
