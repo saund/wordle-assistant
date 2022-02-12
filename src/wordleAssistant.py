@@ -279,6 +279,7 @@
 import json
 import math
 import numpy as np
+import os.path as path
 
 
 ########################################
@@ -664,13 +665,22 @@ def countExpectedMovesToAnswer(probe_word, hypothetical_correct_word, word_list,
                                                     reduced_word_list, move_count, indent + '   ')
     return expect
 
+gl_data_dirpath = path.join('..', 'data')
 
 
 def importWordList(word_filename = None):
     if word_filename == None:
         word_filename = gl_word_filename
+    if path.exists(word_filename):
+        word_filepath = word_filename
+    else:
+        word_filepath = path.join(gl_data_dirpath, word_filename)
+    if not path.exists(word_filepath):
+        print('Problem: could not find file ' + word_filename + ' at either current dir or ../data/ dir')
+        return
+        
     word_list = []
-    with open(word_filename, encoding='utf8') as file:
+    with open(word_filepath, encoding='utf-8') as file:
         for line in file:
             if line.find('#') >= 0:
                 continue
@@ -682,8 +692,8 @@ def importWordList(word_filename = None):
 
 #Collected from the wordle javascript file
 #https://www.powerlanguage.co.uk/wordle/main.e65ce0a5.js
-gl_probe_word_filename = '../data/wordle-probe-words.text'
-gl_answer_word_filename = '../data/wordle-answer-words.text'
+gl_probe_word_filename = 'wordle-probe-words.text'
+gl_answer_word_filename = 'wordle-answer-words.text'
 
 gl_probe_word_list = importWordList(gl_probe_word_filename)
 gl_answer_word_list = importWordList(gl_answer_word_filename)
@@ -1163,7 +1173,7 @@ def writeProbeDictToFile(probe_dict, filename=None, header_str=''):
     for tup_key in probe_dict:   #need to convert keys from tuple of char to a str
         str_key = ''.join(tup_key)
         probe_dict2[str_key] = probe_dict.get(tup_key)
-    with open(filename, 'w', encoding='utf8') as file:
+    with open(filename, 'w', encoding='utf-8') as file:
         output_str = ''
         output_str += '#' + header_str + '\n'
         output_str += json.dumps(probe_dict2, indent=4)
@@ -1175,7 +1185,15 @@ def writeProbeDictToFile(probe_dict, filename=None, header_str=''):
 def readProbeDictFromFile(filename=None):
     if filename == None:
         filename = gl_precomputed_probe_dict_filename
-    with open(filename, 'r', encoding='utf8') as file:
+    if path.exists(filename):
+        filepath = filename
+    else:
+        filepath = path.join(gl_data_dirpath, filename)
+    if not path.exists(filepath):
+        print('Problem: could not find file ' + filename + ' at either current dir or ../data/ dir')
+        return
+        
+    with open(filepath, 'r', encoding='utf-8') as file:
         input_str = ''
         for line in file:
             if line.find('#') >= 0:
@@ -1196,8 +1214,8 @@ def readProbeDictFromFile(filename=None):
     return probe_dict
 
 
-gl_precomputed_probe_dict_raise_normal_mode_filename = '../data/precomputed-probe-dict-raise-normal-mode.json'
-gl_precomputed_probe_dict_raise_hard_mode_filename = '../data/precomputed-probe-dict-raise-hard-mode.json'
+gl_precomputed_probe_dict_raise_normal_mode_filename = 'precomputed-probe-dict-raise-normal-mode.json'
+gl_precomputed_probe_dict_raise_hard_mode_filename = 'precomputed-probe-dict-raise-hard-mode.json'
 
 gl_precomputed_first_probe_word_dict_raise_normal_mode = None
 gl_precomputed_first_probe_word_dict_raise_hard_mode = None
@@ -1407,14 +1425,22 @@ def scoreProbeWordsNextLevel(decent_scorel_list):
 #
 
 
-gl_probe_score_list_filename = '../data/probe-scores-12972.text'
+gl_probe_score_list_filename = 'probe-scores-12972.text'
 
 
 def readScoreListFromFile(filename = None):
     if filename == None:
         filename = gl_probe_score_list_filename
+    if path.exists(filename):
+        filepath = filename
+    else:
+        filepath = path.join(gl_data_dirpath, filename)
+    if not path.exists(filepath):
+        print('Problem: could not find file ' + filename + ' at either current dir or ../data/ dir')
+        return
+        
     scorel_list = []
-    with open(filename, 'r', encoding='utf8') as file:
+    with open(filepath, 'r', encoding='utf-8') as file:
         for line in file:
             if line.find('#') >= 0:
                 continue
@@ -1488,7 +1514,7 @@ def writeProbeAnswerWordMarkArToFile(filename = None):
     if filename == None:
         filename = gl_probe_answer_word_mark_ar_filename
 
-    with open(filename, 'w', encoding='utf8') as file:
+    with open(filename, 'w', encoding='utf-8') as file:
         for i_probe_word in range(len(gl_probe_word_list)):
             for i_answer_word in range(len(gl_answer_word_list)):
                 file.write(str(gl_probe_answer_word_mark_ar[i_probe_word, i_answer_word]))
@@ -1500,7 +1526,7 @@ def readProbeAnswerWordMarkArFromFile(filename = None):
     i_probe_word = 0
     i_answer_word = 0
     
-    with open(filename, 'r', encoding='utf8') as file:
+    with open(filename, 'r', encoding='utf-8') as file:
         for line in file:
             if line.find('#') == 0:
                 continue
@@ -2218,7 +2244,7 @@ def buildSearchPathForAllWordsInProbePolicy(probe_policy, path_to_here = None):
 
 def writeProbePolicyToFile(probe_policy, filename):
     pp_converted = convertProbePolicyToJsonWritable(probe_policy)
-    with open(filename, 'w', encoding='utf8') as file:
+    with open(filename, 'w', encoding='utf-8') as file:
         pp_str = json.dumps(pp_converted, indent=4)
         file.write(pp_str + '\n')
 
@@ -2289,7 +2315,7 @@ gl_probe_word_entropies_filename = 'probe-words-12972-entropies-on-answer-words-
 def writeProbeWordEntropiesToFile(entropy_score_list, filename = None):
     if filename == None:
         filename = gl_probe_word_entropies_filename
-    with open(filename, 'w', encoding='utf8') as file:
+    with open(filename, 'w', encoding='utf-8') as file:
         for score in entropy_score_list:
             str_score = score[0] + ' ' + str(score[1]) + '\n'
             file.write(str_score)
@@ -2298,8 +2324,16 @@ def writeProbeWordEntropiesToFile(entropy_score_list, filename = None):
 def readProbeWordEntropiesFromFile(filename = None):
     if filename == None:
         filename = gl_probe_word_entropies_filename
+    if path.exists(filename):
+        filepath = filename
+    else:
+        filepath = path.join(gl_data_dirpath, filename)
+    if not path.exists(filepath):
+        print('Problem: could not find file ' + filename + ' at either current dir or ../data/ dir')
+        return
+        
     entropy_score_list = []
-    with open(filename, 'r', encoding='utf8') as file:
+    with open(filepath, 'r', encoding='utf-8') as file:
         for line in file:
             if line.find('#') == 0:
                 continue
@@ -2317,13 +2351,20 @@ def readProbeWordEntropiesFromFile(filename = None):
 
 
 def writeWordListToFile(word_list, filename):
-    with open(filename, 'w', encoding='utf8') as file:
+    with open(filename, 'w', encoding='utf-8') as file:
         for word in word_list:
             file.write(word + '\n')
 
 def readWordListFromFile(filename):
     word_list = []
-    with open(filename, 'r', encoding='utf8') as file:
+    if path.exists(filename):
+        filepath = filename
+    else:
+        filepath = path.join(gl_data_dirpath, filename)
+    if not path.exists(filepath):
+        print('Problem: could not find file ' + filename + ' at either current dir or ../data/ dir')
+        return
+    with open(filepath, 'r', encoding='utf-8') as file:
         for line in file:
             if line.find('#') == 0:
                 continue
@@ -2412,7 +2453,14 @@ def readLevel1ProbeWordEntropiesDictFromFile(filename = None):
 
     
 def readDictFromFile(filename):
-    with open(filename, 'r', encoding='utf-8') as file:
+    if path.exists(filename):
+        filepath = filename
+    else:
+        filepath = path.join(gl_data_dirpath, filename)
+    if not path.exists(filepath):
+        print('Problem: could not find file ' + filename + ' at either current dir or ../data/ dir')
+        return
+    with open(filepath, 'r', encoding='utf-8') as file:
         input_str = ''
         count = 0
         the_dict = json.load(file)
