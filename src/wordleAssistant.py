@@ -682,8 +682,8 @@ def importWordList(word_filename = None):
 
 #Collected from the wordle javascript file
 #https://www.powerlanguage.co.uk/wordle/main.e65ce0a5.js
-gl_probe_word_filename = 'wordle-probe-words.text'
-gl_answer_word_filename = 'wordle-answer-words.text'
+gl_probe_word_filename = '../data/wordle-probe-words.text'
+gl_answer_word_filename = '../data/wordle-answer-words.text'
 
 gl_probe_word_list = importWordList(gl_probe_word_filename)
 gl_answer_word_list = importWordList(gl_answer_word_filename)
@@ -1196,8 +1196,8 @@ def readProbeDictFromFile(filename=None):
     return probe_dict
 
 
-gl_precomputed_probe_dict_raise_normal_mode_filename = 'precomputed-probe-dict-raise-normal-mode.json'
-gl_precomputed_probe_dict_raise_hard_mode_filename = 'precomputed-probe-dict-raise-hard-mode.json'
+gl_precomputed_probe_dict_raise_normal_mode_filename = '../data/precomputed-probe-dict-raise-normal-mode.json'
+gl_precomputed_probe_dict_raise_hard_mode_filename = '../data/precomputed-probe-dict-raise-hard-mode.json'
 
 gl_precomputed_first_probe_word_dict_raise_normal_mode = None
 gl_precomputed_first_probe_word_dict_raise_hard_mode = None
@@ -1407,8 +1407,7 @@ def scoreProbeWordsNextLevel(decent_scorel_list):
 #
 
 
-gl_probe_score_list_filename = 'probe-scores-12970.text'
-#should be 12972!
+gl_probe_score_list_filename = '../data/probe-scores-12972.text'
 
 
 def readScoreListFromFile(filename = None):
