@@ -14,7 +14,7 @@ The assistant computes two or three scores for each candidate probe word:<br>
   -average number of remaining allowable answer words given the probe word<br>
   -maximum number of remaining allowable answer words given the probe word<br>
   -expected number of moves to find answer<br>
-If your goal is to find the answer quickly on average, chose the smallest "average" score.  But this is risks requiring more guesses on some days, or even running out of the 6 guesses allowed. If your goal is to make sure you don't run out of moves, choose the smallest "maximum" score.  Usually the rank ordering of probe words is well aligned under each of these scores. When there are no more than 10 possible answer words remaining, use the expected moves score to help you decide which probe word to use next.  Sometimes you have to choose between gambling on a possible answer word versus choosing a safer probe word that cannot be an answer but is maximally informative. 
+If your goal is to find the answer quickly on average, chose the smallest "average" score.  But this risks requiring more guesses on some days, or even running out of the 6 guesses allowed. If your goal is to make sure you don't run out of moves, choose the smallest "maximum" score.  Usually the rank ordering of probe words is well aligned under each of these scores. When there are no more than 10 possible answer words remaining, use the expected moves score to help you decide which probe word to use next.  Sometimes you have to choose between gambling on a possible answer word versus choosing a safer probe word that cannot be an answer but is maximally informative. 
 <p>
 Since the initial searches are only one ply deep, the scores returned are not actually optimal.  But they are close.
 <p>
